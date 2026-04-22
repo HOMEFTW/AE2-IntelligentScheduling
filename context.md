@@ -5,7 +5,7 @@
 - Mod ID: `ae2intelligentscheduling`（计划默认值）
 - Package: `com.homeftw.ae2intelligentscheduling`（计划默认值）
 - Target: Minecraft 1.7.10 + GTNH + AE2
-- 当前阶段：已完成项目脚手架，开始进入代码实现阶段
+- 当前阶段：已完成项目脚手架与纯规划模型，开始进入 AE2 树转订单实现阶段
 
 ## 已实现内容
 
@@ -21,6 +21,13 @@
 - 已创建基础 Gradle 构建文件与 wrapper
 - 已创建 mixin 配置文件与 `mixin` 包占位
 - 已验证 `./gradlew.bat --offline compileJava` 可通过
+
+### 智能合成规划模型
+- 已创建 `SmartCraftOrderScale`、`SmartCraftStatus`
+- 已创建 `SmartCraftNode`、`SmartCraftTask`、`SmartCraftLayer`、`SmartCraftOrder`
+- 已创建 `SmartCraftRequestKey` 抽象接口
+- 已创建 `SmartCraftOrderScaleClassifier` 与 `SmartCraftSplitPlanner`
+- 已验证 `SmartCraftSplitPlannerTest` 通过
 
 ### 机器 / 部件
 - 暂无代码实现

@@ -1,5 +1,23 @@
 # 开发日志
 
+## 2026-04-22：完成 Task 2 纯规划模型与拆分规则
+
+### 已完成
+- 新增 `SmartCraftOrderScale`、`SmartCraftStatus`、`SmartCraftNode`、`SmartCraftTask`、`SmartCraftLayer`、`SmartCraftOrder`
+- 新增 `SmartCraftRequestKey` 作为请求键抽象，给后续 `Ae2RequestKey` 接入留出稳定边界
+- 新增 `SmartCraftOrderScaleClassifier` 与 `SmartCraftSplitPlanner`
+- 新增 `SmartCraftSplitPlannerTest`，覆盖 `SMALL / MEDIUM / LARGE` 三挡规则
+- 确认 `./gradlew.bat --offline test --tests com.homeftw.ae2intelligentscheduling.smartcraft.analysis.SmartCraftSplitPlannerTest` 通过
+
+### 遇到的问题
+- 规划文档中的示例测试使用了 `List.of(...)`，但当前目标字节码仍是 Java 8，需要改成兼容写法
+
+### 设计决策
+- 规划模型当前先保持最小可用实现，优先服务 Task 3 的树转订单能力
+- 请求键先抽象为 `SmartCraftRequestKey` 接口，避免纯规划模型过早耦合到 AE2 具体类
+
+---
+
 ## 2026-04-22：完成 Task 1 项目脚手架
 
 ### 已完成

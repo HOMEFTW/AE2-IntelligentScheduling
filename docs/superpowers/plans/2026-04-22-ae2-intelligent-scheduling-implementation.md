@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a GTNH addon mod that adds a `智能合成` button to the AE2 craft-confirm UI, analyzes the full AE2 crafting tree, splits large intermediate/final deficits into 1-3 programmatic jobs, and executes them layer-by-layer across available crafting CPUs.
+**Goal:** Build a GTNH addon mod that adds a `智能合成` button to the AE2 craft-confirm UI, analyzes the full AE2 crafting tree, splits large intermediate/final deficits into 1/2/4/8/16 programmatic jobs by size tier, and executes them layer-by-layer across available crafting CPUs.
 
 **Architecture:** Keep AE2 responsible for single-job simulation and execution, while this mod owns planning, threshold splitting, order state, task scheduling, and UI. Read the crafted job from AE2's existing `ContainerCraftConfirm`, traverse `CraftingJobV2` / `CraftingRequest` resolver trees into our own immutable planning model, then submit tracked jobs back through `ICraftingGrid.submitJob(...)` using a dedicated `ICraftingRequester` bridge.
 
@@ -191,7 +191,7 @@ git commit -m "feat: scaffold AE2 intelligent scheduling mod"
 - Create: `src/main/java/com/homeftw/ae2intelligentscheduling/smartcraft/analysis/SmartCraftSplitPlanner.java`
 - Test: `src/test/java/com/homeftw/ae2intelligentscheduling/smartcraft/analysis/SmartCraftSplitPlannerTest.java`
 
-- [ ] **Step 1: Write the failing split-planner tests for the `1g / 2.1g` thresholds**
+- [ ] **Step 1: Write the failing split-planner tests for the `1g / 4g / 16g / 64g` thresholds**
 
 ```java
 @Test
@@ -201,10 +201,10 @@ void splits_one_g_into_two_tasks() {
 }
 
 @Test
-void splits_int_max_into_three_tasks_with_exact_sum() {
-    List<Long> parts = SmartCraftSplitPlanner.splitAmount(2_147_483_647L);
-    assertEquals(3, parts.size());
-    assertEquals(2_147_483_647L, parts.stream().mapToLong(Long::longValue).sum());
+void splits_sixty_four_g_into_sixteen_tasks_with_exact_sum() {
+    List<Long> parts = SmartCraftSplitPlanner.splitAmount(64_000_000_000L);
+    assertEquals(16, parts.size());
+    assertEquals(64_000_000_000L, parts.stream().mapToLong(Long::longValue).sum());
 }
 ```
 
@@ -224,12 +224,25 @@ Expected: FAIL with `SmartCraftSplitPlanner` missing
 public final class SmartCraftSplitPlanner {
 
     public static final long ONE_G = 1_000_000_000L;
-    public static final long INT_MAX_G = Integer.MAX_VALUE;
+    public static final long FOUR_G = 4_000_000_000L;
+    public static final long SIXTEEN_G = 16_000_000_000L;
+    public static final long SIXTY_FOUR_G = 64_000_000_000L;
 
     private SmartCraftSplitPlanner() {}
 
     public static List<Long> splitAmount(long missingAmount) {
-        int partitions = missingAmount >= INT_MAX_G ? 3 : (missingAmount >= ONE_G ? 2 : 1);
+        int partitions;
+        if (missingAmount >= SIXTY_FOUR_G) {
+            partitions = 16;
+        } else if (missingAmount >= SIXTEEN_G) {
+            partitions = 8;
+        } else if (missingAmount >= FOUR_G) {
+            partitions = 4;
+        } else if (missingAmount >= ONE_G) {
+            partitions = 2;
+        } else {
+            partitions = 1;
+        }
         long base = missingAmount / partitions;
         long remainder = missingAmount % partitions;
         List<Long> result = new ArrayList<>(partitions);
@@ -628,7 +641,7 @@ git commit -m "feat: add smart craft status UI and control actions"
 - Added `智能合成` button: Task 5
 - Recursive tree analysis: Task 3
 - Deduct current AE stock before queue generation: Task 3
-- Threshold split rules for `1g` / `2.1g`: Task 2
+- Threshold split rules for `1g / 4g / 16g / 64g`: Task 2
 - Layered bottom-up scheduling: Task 4
 - Auto-pick free CPUs: Task 4
 - Pause/cancel/retry and status UI: Task 6

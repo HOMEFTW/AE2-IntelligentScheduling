@@ -5,7 +5,7 @@
 - Mod ID: `ae2intelligentscheduling`
 - Package: `com.homeftw.ae2intelligentscheduling`
 - Target: Minecraft 1.7.10 + GTNH + AE2
-- 当前阶段：已完成项目脚手架、纯规划模型、AE2 合成树快照到智能订单的基础转换，以及运行态调度骨架
+- 当前阶段：已完成项目脚手架、纯规划模型、AE2 合成树快照、运行态调度骨架，以及 AE2 智能合成按钮与预览入口
 
 ## 已实现内容
 
@@ -37,6 +37,7 @@
 - 已创建 `Ae2CraftingJobSnapshotFactory`
 - 已创建 `Ae2CpuSelector`
 - 已创建 `Ae2CraftSubmitter`
+- 已创建 `ContainerCraftConfirmAccessor` 与 `ContainerCraftConfirmInvoker`
 - `Ae2CraftTreeWalker` 当前按 `CraftingRequest.usedResolvers -> CraftFromPatternTask.childRequests` 做只读遍历
 - 已验证 `Ae2CraftTreeWalkerTest` 与 `Ae2CpuSelectorTest` 通过
 
@@ -52,17 +53,14 @@
 - 有空闲 CPU 时通过提交回调将任务标记为 `RUNNING`
 - 已验证 `SmartCraftSchedulerTest` 通过
 
-### 机器 / 部件
-- 暂无代码实现
-
-### 物品
-- 暂无代码实现
-
-### 方块
-- 暂无代码实现
-
-### 配方
-- 暂无代码实现
+### AE2 智能合成入口
+- 已创建 `NetworkHandler`
+- 已创建 `OpenSmartCraftPreviewPacket`
+- 已创建 `GuiCraftConfirmMixin`
+- `GuiCraftConfirmMixin` 当前会向 AE2 合成确认界面注入 `智能合成` 按钮
+- 客户端点击 `智能合成` 后会发送本模组自定义 packet，而不是走 AE2 的 `PacketValueConfig("Terminal.Start", ...)`
+- 服务端当前会读取 `ContainerCraftConfirm` 中现有的 `CraftingJobV2`，分析生成 `SmartCraftOrder` 并登记到 `AE2IntelligentScheduling.SMART_CRAFT_ORDER_MANAGER`
+- 已验证 `SmartCraftPacketCodecTest` 通过
 
 ### 配置项
 | Key | Default | Description |
@@ -71,7 +69,9 @@
 | `enableDebugLogging` | `false` | 是否启用智能合成调试日志 |
 
 ### Mixin
-- `mixins.ae2intelligentscheduling.json`：基础 mixin 配置文件，当前尚未注册具体 mixin 类
+- `ae2.ContainerCraftConfirmAccessor`：读取 `ContainerCraftConfirm.result`
+- `ae2.ContainerCraftConfirmInvoker`：保留对 `getActionSrc()` 的调用入口
+- `ae2.GuiCraftConfirmMixin`：向 AE2 合成确认 GUI 注入 `智能合成` 按钮并发送自定义 packet
 
 ## 目标功能摘要
 - 在 AE2 原合成 UI 上新增 `智能合成` 按钮
@@ -116,6 +116,7 @@
 - AE2 负责单个 job 的实际执行，本模组负责分析、拆分、排队、依赖控制与自动推进
 - 当前 AE2 集成基础层已经能把 `CraftingRequest` 树转换成 `SmartCraftOrderBuilder` 可消费的快照结构
 - 当前运行态调度层已具备层级推进与 CPU 等待语义，但尚未打通真实 `ICraftingJob` 提交与回写
+- 当前 UI 入口层已具备 `智能合成` 按钮与预览入口，但尚未实现状态 GUI、取消 / 重试按钮和真实执行回写
 - 第一版不做运行中订单的跨重启无损恢复，服务器重启后应重新分析当前 AE 网络状态
 - 当前可参考本地 AE2 源码目录：`D:\Code\GTNH LIB\Applied-Energistics-2-Unofficial-rv3-beta-695-GTNH`
 - 当前已确认的关键 AE2 接入点包括 `GuiCraftConfirm`、`ContainerCraftConfirm`、`PacketValueConfig`、`ICraftingGrid`、`CraftingJobV2`、`CraftingRequest`、`CraftableItemResolver`

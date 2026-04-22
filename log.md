@@ -1,5 +1,26 @@
 # 开发日志
 
+## 2026-04-22：完成 Task 5 AE2 智能合成按钮与预览入口
+
+### 已完成
+- 新增 `NetworkHandler` 与 `OpenSmartCraftPreviewPacket`
+- 新增 `GuiCraftConfirmMixin`、`ContainerCraftConfirmAccessor`、`ContainerCraftConfirmInvoker`
+- 在 `GuiCraftConfirm` 中加入 `智能合成` 按钮，并接到本模组自定义 packet
+- 服务端收到点击后会读取当前 `CraftingJobV2`，生成 `SmartCraftOrder` 并登记到 `SMART_CRAFT_ORDER_MANAGER`
+- 新增 `SmartCraftPacketCodecTest`
+- 验证 `./gradlew.bat --offline --no-daemon test --tests com.homeftw.ae2intelligentscheduling.network.packet.SmartCraftPacketCodecTest` 通过
+
+### 遇到的问题
+- AE2 自己的按钮区几乎占满底部主操作区，新增按钮如果放在原 `Start / Cancel / StartWithFollow` 行会直接挤压原逻辑
+- 第三方 mod 类的 accessor / invoker mixin 默认会尝试走混淆映射，导致编译阶段出现无意义警告
+
+### 设计决策
+- `智能合成` 按钮放在 AE2 合成确认 UI 中的独立位置，避免影响原始 `Start` 按钮和原有行为
+- AE2 预览入口当前先做“点击后分析并登记订单”的最小闭环，状态 GUI 与真实执行反馈留到后续任务接上
+- AE2 第三方目标 mixin 明确使用 `remap = false`，避免对非原版目标做错误映射
+
+---
+
 ## 2026-04-22：完成 Task 4 运行态调度骨架与 AE2 requester bridge
 
 ### 已完成
@@ -73,85 +94,3 @@
 - 当前项目构建验证统一使用 `JDK 21` 运行 Gradle
 - `gradle.properties` 默认设置 `modVersion = 0.1.0-dev` 与 `gtnh.modules.gitVersion = false`
 - Task 1 完成后，下一步进入纯规划模型实现与测试
-
----
-
-## 2026-04-22：加入小 / 中 / 大三挡订单分流
-
-### 已完成
-- 明确订单量级按整棵树中的最大节点缺口判定，而不是只看最终产物
-- 将订单量级分为 `SMALL / MEDIUM / LARGE`
-- 明确阈值为 `< 2.1g`、`>= 2.1g && < 16g`、`>= 16g`
-- 为 `MEDIUM` 档补入过渡拆分规则：`1 / 2 / 3 / 4 / 6`
-- 约定 `SMALL` 保留原先的小单智能拆分模式，`LARGE` 使用激进分流模式
-- 同步更新 spec、implementation plan、`context.md` 与 `ToDOLIST.md`
-
-### 遇到的问题
-- 仅保留“小单 / 大单”两挡时，`2.1g ~ 16g` 区间缺少平滑过渡，既容易让中等订单拆得不够，也容易让规则语义不清晰
-
-### 设计决策
-- 订单量级先做一次全局判定，再按对应量级规则去拆每个节点
-- `SMALL` 使用 `1 / 2 / 3`
-- `MEDIUM` 使用 `1 / 2 / 3 / 4 / 6`
-- `LARGE` 使用 `1 / 2 / 4 / 8 / 16`
-
----
-
-## 2026-04-22：按 AE2 CPU 截图重定拆分规则
-
-### 已完成
-- 结合 AE2 合成状态截图重新评估大单拆分策略
-- 放弃原先基于 `1g / 2.1g -> 1 / 2 / 3 CPU` 的拆分方案
-- 将大单拆分规则改为 `1 / 2 / 4 / 8 / 16`
-- 明确 `2.1g` 继续保留为数量单位边界参考值，但不再作为大单 CPU 分档阈值
-- 同步更新 spec、implementation plan、`context.md` 与 `ToDOLIST.md`
-
-### 遇到的问题
-- 从截图可以看到 `27G`、`41G`、`52G`、`54G`、`151G` 等量级任务，原先最多只拆到 `3` 个 CPU 的方案无法有效打散超大单
-
-### 设计决策
-- 第一版先以“按订单量级分档”作为过渡方案，不直接引入更复杂的动态负载算法
-- 实际分配时仍需裁剪到 `min(规则建议值, 当前空闲 CPU 数, 配置允许的单节点最大 CPU 数)`
-
----
-
-## 2026-04-22：实现计划定稿并接入 AE2 源码参考
-
-### 已完成
-- 基于已确认 spec 编写实现计划文档 `docs/superpowers/plans/2026-04-22-ae2-intelligent-scheduling-implementation.md`
-- 明确默认 `modId = ae2intelligentscheduling`
-- 明确默认根包 `com.homeftw.ae2intelligentscheduling`
-- 确认可直接参考本地 AE2 源码目录 `D:\Code\GTNH LIB\Applied-Energistics-2-Unofficial-rv3-beta-695-GTNH`
-- 确认首批关键接入点为 `GuiCraftConfirm`、`ContainerCraftConfirm`、`PacketValueConfig`、`ICraftingGrid`、`CraftingJobV2`、`CraftingRequest`、`CraftableItemResolver`
-
-### 遇到的问题
-- AE2 的“智能合成”入口不能直接复用原 `Terminal.Start` 路径，否则会覆盖原有按钮行为
-- 若要可靠追踪提交后的 job 状态，不能长期依赖 `requestingMachine = null`，需要单独实现 `ICraftingRequester` 桥接
-
-### 设计决策
-- `智能合成` 按钮通过 Mixin 注入到 `GuiCraftConfirm`
-- 客户端点击 `智能合成` 后改走本模组自定义 packet，而不是 AE2 自带的 `PacketValueConfig("Terminal.Start", ...)`
-- 合成树分析优先基于 `CraftingJobV2 -> CraftingRequest.usedResolvers -> CraftFromPatternTask.childRequests` 做只读遍历
-
----
-
-## 2026-04-22：AE2-IntelligentScheduling 设计定稿
-
-### 已完成
-- 确认新模组名称为 `AE2-IntelligentScheduling`
-- 明确功能载体为 AE2 网络部件 / 终端
-- 明确保留 AE2 原 `合成` 按钮，仅新增 `智能合成` 按钮
-- 明确智能合成将递归分析整棵 AE2 合成树
-- 明确库存语义为先扣 AE 现存库存，再按缺口生成队列
-- 明确调度方式为按依赖分层下单，先底层后上层
-- 明确 CPU 选择为自动挑选当前空闲 CPU
-- 将完整设计写入 `docs/superpowers/specs/2026-04-22-ae2-intelligent-scheduling-design.md`
-
-### 遇到的问题
-- 当前 `D:\Code` 根目录不是单独的 git 仓库，不能直接在根目录提交设计文档
-- 需要为新模组建立独立项目目录后，再对设计文档和跟踪文件进行版本管理
-
-### 设计决策
-- `1g` 固定定义为 `1,000,000,000`
-- `2.1g` 固定定义为 `2,147,483,647`
-- 第一版不做跨重启运行中订单无损恢复，改为“重启后重新分析并重建队列”

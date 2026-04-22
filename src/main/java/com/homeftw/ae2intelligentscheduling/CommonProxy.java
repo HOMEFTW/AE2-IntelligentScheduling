@@ -1,5 +1,7 @@
 package com.homeftw.ae2intelligentscheduling;
 
+import com.homeftw.ae2intelligentscheduling.network.NetworkHandler;
+
 import cpw.mods.fml.common.event.FMLInitializationEvent;
 import cpw.mods.fml.common.event.FMLLoadCompleteEvent;
 import cpw.mods.fml.common.event.FMLPostInitializationEvent;
@@ -13,7 +15,9 @@ public class CommonProxy {
         AE2IntelligentScheduling.LOG.info("Initializing {} {}", AE2IntelligentScheduling.MOD_NAME, Tags.VERSION);
     }
 
-    public void init(FMLInitializationEvent event) {}
+    public void init(FMLInitializationEvent event) {
+        NetworkHandler.init();
+    }
 
     public void postInit(FMLPostInitializationEvent event) {}
 

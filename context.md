@@ -2,8 +2,8 @@
 
 ## 基本信息
 - Mod Name: AE2-IntelligentScheduling
-- Mod ID: 待定
-- Package: 待定
+- Mod ID: `ae2intelligentscheduling`（计划默认值）
+- Package: `com.homeftw.ae2intelligentscheduling`（计划默认值）
 - Target: Minecraft 1.7.10 + GTNH + AE2
 - 当前阶段：设计阶段，尚未开始代码实现
 
@@ -13,6 +13,7 @@
 | 名称 | 路径 | 状态 |
 |------|------|------|
 | 智能合成设计文档 | `docs/superpowers/specs/2026-04-22-ae2-intelligent-scheduling-design.md` | 已完成 |
+| 实现计划文档 | `docs/superpowers/plans/2026-04-22-ae2-intelligent-scheduling-implementation.md` | 已完成 |
 
 ### 机器 / 部件
 - 暂无代码实现
@@ -58,3 +59,5 @@
 - 推荐方案为“AE2 原 UI 注入 + 智能合成按钮 + 独立调度器内核”
 - AE2 负责单个 job 实际执行，本模组负责分析、拆分、排队、依赖控制与自动推进
 - 第一版不做运行中订单的跨重启无损恢复，服务器重启后应重新分析当前 AE 网络状态
+- 当前已确认可参考本地 AE2 源码目录：`D:\Code\GTNH LIB\Applied-Energistics-2-Unofficial-rv3-beta-695-GTNH`
+- 当前已确认的关键 AE2 接入点包括 `GuiCraftConfirm`、`ContainerCraftConfirm`、`PacketValueConfig`、`ICraftingGrid`、`CraftingJobV2`、`CraftingRequest`、`CraftableItemResolver`

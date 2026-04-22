@@ -1,5 +1,25 @@
 # 开发日志
 
+## 2026-04-22：实现计划定稿并接入 AE2 源码参考
+
+### 已完成
+- 基于已确认 spec 编写实现计划文档 `docs/superpowers/plans/2026-04-22-ae2-intelligent-scheduling-implementation.md`
+- 明确实现计划默认使用 `modId=ae2intelligentscheduling`
+- 明确实现计划默认使用根包 `com.homeftw.ae2intelligentscheduling`
+- 确认可直接参考本地 AE2 源码目录 `D:\Code\GTNH LIB\Applied-Energistics-2-Unofficial-rv3-beta-695-GTNH`
+- 确认首批关键接入点为 `GuiCraftConfirm`、`ContainerCraftConfirm`、`PacketValueConfig`、`ICraftingGrid`、`CraftingJobV2`、`CraftingRequest`、`CraftableItemResolver`
+
+### 遇到的问题
+- AE2 的“智能合成”入口不能直接复用原 `Terminal.Start` 路径，否则会覆盖原有按钮行为
+- 若要可靠追踪提交后的 job 状态，不能长期依赖 `requestingMachine = null`，需要单独实现 `ICraftingRequester` 桥接
+
+### 设计决策
+- `智能合成` 按钮通过 Mixin 注入到 `GuiCraftConfirm`
+- 客户端点击 `智能合成` 后改走本模组自定义 packet，而不是 AE2 自带的 `PacketValueConfig("Terminal.Start", ...)`
+- 合成树分析优先基于 `CraftingJobV2 -> CraftingRequest.usedResolvers -> CraftFromPatternTask.childRequests` 做只读遍历
+
+---
+
 ## 2026-04-22：AE2-IntelligentScheduling 设计定稿
 
 ### 已完成

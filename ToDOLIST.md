@@ -1,8 +1,7 @@
 # TODO 列表
 
 ## 当前计划
-- [ ] 审阅并确认 `docs/superpowers/specs/2026-04-22-ae2-intelligent-scheduling-design.md`
-- [ ] 基于设计文档编写实现计划
+- [ ] 审阅并确认 `docs/superpowers/plans/2026-04-22-ae2-intelligent-scheduling-implementation.md`
 - [ ] 按实现计划脚手架化新 GTNH 模组项目
 - [ ] 接入 AE2 相关依赖与基础集成点
 - [ ] 实现智能合成分析、拆分、分层调度与 UI
@@ -15,6 +14,7 @@
 ## 已完成
 - [x] 明确新模组名称为 `AE2-IntelligentScheduling`
 - [x] 完成智能合成整体设计并落地为 spec 文档
+- [x] 基于设计文档完成实现计划，并确认可参考本地 AE2 源码项目
 
 ## 暂缓 / 拒绝
 - 暂缓：第一版不做跨重启运行中订单无损恢复，原因是需要持久化整棵运行态任务树并重新绑定 AE2 运行中 job，复杂度过高

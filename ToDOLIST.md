@@ -1,8 +1,6 @@
 # TODO 列表
 
 ## 当前计划
-- [ ] 审阅并确认 `docs/superpowers/plans/2026-04-22-ae2-intelligent-scheduling-implementation.md`
-- [ ] 按实现计划脚手架化新 GTNH 模组项目
 - [ ] 接入 AE2 相关依赖与基础集成点
 - [ ] 实现智能合成分析、拆分、分层调度与 UI
 
@@ -15,6 +13,8 @@
 - [x] 明确新模组名称为 `AE2-IntelligentScheduling`
 - [x] 完成智能合成整体设计并落地为 spec 文档
 - [x] 基于设计文档完成实现计划，并确认可参考本地 AE2 源码项目
+- [x] 审阅并确认 `docs/superpowers/plans/2026-04-22-ae2-intelligent-scheduling-implementation.md`
+- [x] 按实现计划完成 GTNH 模组项目脚手架并跑通 `compileJava`
 - [x] 基于 AE2 CPU 状态截图重定拆分规则为 `1 / 2 / 4 / 8 / 16` 分档
 - [x] 将订单规则升级为“小 / 中 / 大”三挡，并确定按整棵树最大节点缺口判定
 

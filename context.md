@@ -5,7 +5,7 @@
 - Mod ID: `ae2intelligentscheduling`（计划默认值）
 - Package: `com.homeftw.ae2intelligentscheduling`（计划默认值）
 - Target: Minecraft 1.7.10 + GTNH + AE2
-- 当前阶段：设计阶段，尚未开始代码实现
+- 当前阶段：已完成项目脚手架，开始进入代码实现阶段
 
 ## 已实现内容
 
@@ -14,6 +14,13 @@
 |------|------|------|
 | 智能合成设计文档 | `docs/superpowers/specs/2026-04-22-ae2-intelligent-scheduling-design.md` | 已完成 |
 | 实现计划文档 | `docs/superpowers/plans/2026-04-22-ae2-intelligent-scheduling-implementation.md` | 已完成 |
+
+### 基础代码
+- 已创建 `AE2IntelligentScheduling` 主类与 `CommonProxy` / `ClientProxy`
+- 已创建 `Config` 配置骨架
+- 已创建基础 Gradle 构建文件与 wrapper
+- 已创建 mixin 配置文件与 `mixin` 包占位
+- 已验证 `./gradlew.bat --offline compileJava` 可通过
 
 ### 机器 / 部件
 - 暂无代码实现
@@ -28,10 +35,13 @@
 - 暂无代码实现
 
 ### 配置项
-- 暂无代码实现
+| Key | Default | Description |
+|-----|---------|-------------|
+| `maxCpuPerNode` | `16` | 单个缺口节点允许分配的最大 CPU 数 |
+| `enableDebugLogging` | `false` | 是否启用智能合成调试日志 |
 
 ### Mixin
-- 暂无代码实现
+- `mixins.ae2intelligentscheduling.json`：基础 mixin 配置文件，当前尚未注册具体 mixin 类
 
 ## 目标功能摘要
 - 在 AE2 原合成 UI 上新增 `智能合成` 按钮
@@ -77,3 +87,4 @@
 - 第一版不做运行中订单的跨重启无损恢复，服务器重启后应重新分析当前 AE 网络状态
 - 当前已确认可参考本地 AE2 源码目录：`D:\Code\GTNH LIB\Applied-Energistics-2-Unofficial-rv3-beta-695-GTNH`
 - 当前已确认的关键 AE2 接入点包括 `GuiCraftConfirm`、`ContainerCraftConfirm`、`PacketValueConfig`、`ICraftingGrid`、`CraftingJobV2`、`CraftingRequest`、`CraftableItemResolver`
+- 当前编译验证使用 `JDK 21` 运行 Gradle，AE2 编译依赖使用 `com.github.GTNewHorizons:Applied-Energistics-2-Unofficial:rv3-beta-695-GTNH:dev`

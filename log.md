@@ -1,5 +1,26 @@
 # 开发日志
 
+## 2026-04-22：完成 Task 1 项目脚手架
+
+### 已完成
+- 在 `feature/implement-smart-craft` worktree 中建立 GTNH 模组脚手架
+- 新增 `build.gradle`、`settings.gradle`、`gradle.properties`、`dependencies.gradle`、`addon.gradle`、`repositories.gradle`
+- 新增 `AE2IntelligentScheduling` 主类、`CommonProxy`、`ClientProxy`、`Config`
+- 新增 mixin 配置、`mixin` 包占位与 `accesstransformer.cfg`
+- 复制 Gradle wrapper，并确认 `./gradlew.bat --offline compileJava` 可成功执行
+- 补充项目级 `.gitignore`，忽略 `.gradle`、`build`、`run`、`bin` 等生成目录
+
+### 遇到的问题
+- `JAVA_HOME` 指向 `Zulu 25` 时，GTNH 构建链会在启动期失败，需要改用兼容的 Gradle JDK
+- AE2 依赖若使用错误坐标会命中 TLS 有问题的旧镜像，需改为本机已缓存可用的 GTNH 坐标
+
+### 设计决策
+- 当前项目构建验证统一使用 `JDK 21` 运行 Gradle
+- `gradle.properties` 默认设置 `modVersion = 0.1.0-dev` 与 `gtnh.modules.gitVersion = false`
+- Task 1 完成后，下一步进入纯规划模型实现与测试
+
+---
+
 ## 2026-04-22：加入小 / 中 / 大三挡订单分流
 
 ### 已完成

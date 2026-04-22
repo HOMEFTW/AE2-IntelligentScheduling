@@ -2,7 +2,6 @@
 
 ## 当前计划
 - [ ] 实现智能合成分析、拆分、分层调度与 UI
-- [ ] 打通真实 `ICraftingJob` 提交与运行态任务跟踪
 - [ ] 补强状态 GUI 的实时刷新、分页/滚动展示与更细粒度任务反馈
 
 ## 未来想法
@@ -23,6 +22,7 @@
 - [x] 完成运行态 `SmartCraftOrderManager`、`SmartCraftScheduler`、`SmartCraftRequesterBridge` 骨架，并跑通 `Ae2CpuSelectorTest` 与 `SmartCraftSchedulerTest`
 - [x] 完成 `GuiCraftConfirm` 上的 `智能合成` 按钮、自定义 packet 预览入口与基础订单登记链路，并跑通 `SmartCraftPacketCodecTest`
 - [x] 完成智能合成状态页骨架、订单同步 packet、取消 / 重试动作链路，并补齐 Task 6 的 Java 8 兼容修复
+- [x] 打通真实 `ICraftingJob` 计算 / 提交 / link 轮询链路，并新增服务端运行态协调器自动推进智能合成订单
 
 ## 暂缓 / 拒绝
 - 暂缓：第一版不做跨重启运行中订单无损恢复，原因是需要持久化整棵运行态任务树并重新绑定 AE2 运行中 job，复杂度过高

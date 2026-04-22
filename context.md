@@ -5,7 +5,7 @@
 - Mod ID: `ae2intelligentscheduling`
 - Package: `com.homeftw.ae2intelligentscheduling`
 - Target: Minecraft 1.7.10 + GTNH + AE2
-- 当前阶段：已完成项目脚手架、纯规划模型、AE2 合成树快照、运行态调度骨架、AE2 智能合成按钮与预览入口，以及最小可用的智能合成状态页骨架
+- 当前阶段：已完成项目脚手架、纯规划模型、AE2 合成树快照、运行态调度骨架、真实 AE2 下单运行态协调器、AE2 智能合成按钮与预览入口，以及最小可用的智能合成状态页骨架
 
 ## 已实现内容
 
@@ -37,8 +37,10 @@
 - 已创建 `Ae2CraftingJobSnapshotFactory`
 - 已创建 `Ae2CpuSelector`
 - 已创建 `Ae2CraftSubmitter`
+- 已创建 `Ae2SmartCraftJobPlanner`
 - 已创建 `ContainerCraftConfirmAccessor` 与 `ContainerCraftConfirmInvoker`
 - `Ae2CraftTreeWalker` 当前按 `CraftingRequest.usedResolvers -> CraftFromPatternTask.childRequests` 做只读遍历
+- `Ae2RequestKey` 当前会保留 item 请求模板，可在运行态按 task amount 重建 `IAEItemStack`
 - 已验证 `Ae2CraftTreeWalkerTest` 与 `Ae2CpuSelectorTest` 通过
 
 ### 运行态调度骨架
@@ -46,12 +48,22 @@
 - 已创建 `SmartCraftOrderManager`
 - 已创建 `SmartCraftScheduler`
 - 已创建 `SmartCraftStockVerifier`
+- 已创建 `SmartCraftRuntimeSession`
+- 已创建 `SmartCraftRuntimeCoordinator`
+- 已创建 `SmartCraftServerTickHandler`
+- 已创建 `SmartCraftAe2RuntimeSessionFactory`
 - `SmartCraftScheduler` 当前支持：
 - 只推进当前层
 - 当前层全部完成后再进入下一层
 - 无空闲 CPU 时将任务标记为 `WAITING_CPU`
 - 有空闲 CPU 时通过提交回调将任务标记为 `RUNNING`
 - `SmartCraftOrderManager` 当前支持 `track(UUID)`、`cancel(UUID)`、`retryFailedTasks(UUID)` 与整单 layer 替换
+- `SmartCraftRuntimeCoordinator` 当前支持：
+- 从 `SmartCraftTask` 发起真实 `beginCraftingJob`
+- 在服务端 tick 中轮询 planning `Future<ICraftingJob>`
+- 在有空闲 CPU 时执行 `submitJob`
+- 使用 `ICraftingLink` 回填 `RUNNING / DONE / FAILED / CANCELLED`
+- 取消 / 重试会同步影响运行中的 future 与 link
 - 已验证 `SmartCraftSchedulerTest` 通过
 
 ### AE2 智能合成入口
@@ -63,6 +75,7 @@
 - `GuiCraftConfirmMixin` 当前会向 AE2 合成确认界面注入 `智能合成` 按钮
 - 客户端点击 `智能合成` 后会发送本模组自定义 packet，而不是走 AE2 的 `PacketValueConfig("Terminal.Start", ...)`
 - 服务端当前会读取 `ContainerCraftConfirm` 中现有的 `CraftingJobV2`，分析生成 `SmartCraftOrder` 并登记到 `AE2IntelligentScheduling.SMART_CRAFT_ORDER_MANAGER`
+- 服务端在登记订单后会创建 `SmartCraftRuntimeSession` 并注册到 `SMART_CRAFT_RUNTIME`
 - 服务端在登记订单后会通过 `SmartCraftOrderSyncService` 下发 `SyncSmartCraftOrderPacket`，直接打开本模组状态页
 - 已验证 `SmartCraftPacketCodecTest` 通过
 
@@ -72,7 +85,7 @@
 - 已创建 `SmartCraftTaskList`
 - `GuiSmartCraftStatus` 当前展示订单 ID、目标物品、量级、状态、当前层与扁平任务列表
 - 状态页当前支持 `取消整单` 与 `重试失败` 两个动作按钮，并通过 `RequestSmartCraftActionPacket` 回传到服务端
-- 当前状态页仍属于最小实现：尚未提供滚动列表、自动轮询刷新或真实 AE2 job 运行态进度回填
+- 当前状态页仍属于最小实现：尚未提供滚动列表或自动轮询刷新，但订单状态已由服务端运行态协调器按事件推送更新
 
 ### 配置项
 | Key | Default | Description |
@@ -127,9 +140,10 @@
 - 推荐方案是“AE2 原 UI 注入 + 智能合成按钮 + 独立调度器内核”
 - AE2 负责单个 job 的实际执行，本模组负责分析、拆分、排队、依赖控制与自动推进
 - 当前 AE2 集成基础层已经能把 `CraftingRequest` 树转换成 `SmartCraftOrderBuilder` 可消费的快照结构
-- 当前运行态调度层已具备层级推进与 CPU 等待语义，但尚未打通真实 `ICraftingJob` 提交与回填
+- 当前运行态调度层已打通真实 `ICraftingJob` 计算、`submitJob` 提交与 `ICraftingLink` 回填
 - 当前 UI 入口层已具备 `智能合成` 按钮、预览入口与最小状态 GUI，并支持取消 / 重试动作回传
 - 当前状态页同步仍是“按事件推送”模式，尚未接入持续轮询或调度器驱动的实时刷新
+- 当前真实运行态重建仅对 item 请求开放；fluid 请求模板尚未接入自动下单
 - 第一版不做运行中订单的跨重启无损恢复，服务器重启后应重新分析当前 AE 网络状态
 - 当前可参考本地 AE2 源码目录：`D:\Code\GTNH LIB\Applied-Energistics-2-Unofficial-rv3-beta-695-GTNH`
 - 当前已确认的关键 AE2 接入点包括 `GuiCraftConfirm`、`ContainerCraftConfirm`、`PacketValueConfig`、`ICraftingGrid`、`CraftingJobV2`、`CraftingRequest`、`CraftableItemResolver`

@@ -4,6 +4,7 @@ import com.homeftw.ae2intelligentscheduling.network.packet.SyncSmartCraftOrderPa
 
 import com.homeftw.ae2intelligentscheduling.network.NetworkHandler;
 
+import cpw.mods.fml.common.FMLCommonHandler;
 import cpw.mods.fml.common.event.FMLInitializationEvent;
 import cpw.mods.fml.common.event.FMLLoadCompleteEvent;
 import cpw.mods.fml.common.event.FMLPostInitializationEvent;
@@ -19,6 +20,7 @@ public class CommonProxy {
 
     public void init(FMLInitializationEvent event) {
         NetworkHandler.init();
+        FMLCommonHandler.instance().bus().register(AE2IntelligentScheduling.SMART_CRAFT_TICK_HANDLER);
     }
 
     public void postInit(FMLPostInitializationEvent event) {}

@@ -9,10 +9,13 @@ import net.minecraft.util.ChatComponentText;
 import com.homeftw.ae2intelligentscheduling.AE2IntelligentScheduling;
 import com.homeftw.ae2intelligentscheduling.integration.ae2.Ae2CraftingJobSnapshotFactory;
 import com.homeftw.ae2intelligentscheduling.mixin.ae2.ContainerCraftConfirmAccessor;
+import com.homeftw.ae2intelligentscheduling.mixin.ae2.ContainerCraftConfirmInvoker;
 import com.homeftw.ae2intelligentscheduling.smartcraft.analysis.SmartCraftOrderBuilder;
 import com.homeftw.ae2intelligentscheduling.smartcraft.model.SmartCraftOrder;
+import com.homeftw.ae2intelligentscheduling.smartcraft.runtime.SmartCraftRuntimeSession;
 
 import appeng.api.networking.crafting.ICraftingJob;
+import appeng.api.networking.security.BaseActionSource;
 import appeng.container.implementations.ContainerCraftConfirm;
 import appeng.crafting.v2.CraftingJobV2;
 import cpw.mods.fml.common.network.ByteBufUtils;
@@ -89,6 +92,15 @@ public final class OpenSmartCraftPreviewPacket implements IMessage {
                     .build(new Ae2CraftingJobSnapshotFactory().fromRequest(craftingJobV2.originalRequest));
             UUID trackedOrderId = AE2IntelligentScheduling.SMART_CRAFT_ORDER_MANAGER.track(order);
             if (player instanceof EntityPlayerMP) {
+                BaseActionSource actionSource = ((ContainerCraftConfirmInvoker) craftConfirm).ae2is$invokeGetActionSrc();
+                SmartCraftRuntimeSession session = AE2IntelligentScheduling.SMART_CRAFT_SESSION_FACTORY
+                        .create((EntityPlayerMP) player, actionSource);
+                if (session != null) {
+                    AE2IntelligentScheduling.SMART_CRAFT_RUNTIME.register(trackedOrderId, session);
+                } else {
+                    player.addChatMessage(
+                        new ChatComponentText("\u667A\u80FD\u5408\u6210\u8FD0\u884C\u6001\u521D\u59CB\u5316\u5931\u8D25\uFF1AAE2 \u8282\u70B9\u4E0A\u4E0B\u6587\u4E0D\u53EF\u7528"));
+                }
                 AE2IntelligentScheduling.SMART_CRAFT_ORDER_SYNC.sync((EntityPlayerMP) player, trackedOrderId);
             }
 

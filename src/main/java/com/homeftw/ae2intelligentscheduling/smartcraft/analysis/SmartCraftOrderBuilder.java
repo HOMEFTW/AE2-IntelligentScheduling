@@ -26,17 +26,18 @@ public final class SmartCraftOrderBuilder {
     public SmartCraftOrder build(TreeNode root) {
         SmartCraftOrderScale scale = SmartCraftOrderScaleClassifier.classify(findMaxMissing(root));
         List<SmartCraftLayer> layers = new ArrayList<>();
-        visit(root, scale, layers);
+        int[] nextTaskId = new int[] { 0 };
+        visit(root, scale, layers, nextTaskId);
         return SmartCraftOrder.queued(root.requestKey(), missingAmount(root), scale, layers);
     }
 
-    private int visit(TreeNode node, SmartCraftOrderScale scale, List<SmartCraftLayer> layers) {
+    private int visit(TreeNode node, SmartCraftOrderScale scale, List<SmartCraftLayer> layers, int[] nextTaskId) {
         int layerIndex = 0;
         boolean hasChildren = false;
 
         for (TreeNode child : node.children()) {
             hasChildren = true;
-            layerIndex = Math.max(layerIndex, visit(child, scale, layers) + 1);
+            layerIndex = Math.max(layerIndex, visit(child, scale, layers, nextTaskId) + 1);
         }
 
         if (!hasChildren) {
@@ -45,7 +46,9 @@ public final class SmartCraftOrderBuilder {
 
         long missingAmount = missingAmount(node);
         if (missingAmount > 0L) {
-            ensureLayer(layers, layerIndex).tasks().addAll(toTasks(node.requestKey(), missingAmount, layerIndex, scale));
+            ensureLayer(layers, layerIndex)
+                    .tasks()
+                    .addAll(toTasks(node.requestKey(), missingAmount, layerIndex, scale, nextTaskId));
         }
 
         return layerIndex;
@@ -59,11 +62,12 @@ public final class SmartCraftOrderBuilder {
     }
 
     private List<SmartCraftTask> toTasks(SmartCraftRequestKey requestKey, long missingAmount, int depth,
-            SmartCraftOrderScale scale) {
+            SmartCraftOrderScale scale, int[] nextTaskId) {
         List<Long> parts = SmartCraftSplitPlanner.splitAmount(scale, missingAmount);
         List<SmartCraftTask> tasks = new ArrayList<>(parts.size());
         for (int i = 0; i < parts.size(); i++) {
             tasks.add(new SmartCraftTask(
+                "task-" + nextTaskId[0]++,
                 requestKey,
                 parts.get(i).longValue(),
                 depth,

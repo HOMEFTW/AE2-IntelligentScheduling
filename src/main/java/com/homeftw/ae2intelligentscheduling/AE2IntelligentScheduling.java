@@ -4,8 +4,15 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import com.homeftw.ae2intelligentscheduling.config.Config;
+import com.homeftw.ae2intelligentscheduling.integration.ae2.Ae2CraftSubmitter;
+import com.homeftw.ae2intelligentscheduling.integration.ae2.Ae2CpuSelector;
+import com.homeftw.ae2intelligentscheduling.integration.ae2.Ae2SmartCraftJobPlanner;
 import com.homeftw.ae2intelligentscheduling.smartcraft.runtime.SmartCraftOrderManager;
+import com.homeftw.ae2intelligentscheduling.smartcraft.runtime.SmartCraftAe2RuntimeSessionFactory;
+import com.homeftw.ae2intelligentscheduling.smartcraft.runtime.SmartCraftRuntimeCoordinator;
 import com.homeftw.ae2intelligentscheduling.smartcraft.runtime.SmartCraftOrderSyncService;
+import com.homeftw.ae2intelligentscheduling.smartcraft.runtime.SmartCraftRuntimeSession;
+import com.homeftw.ae2intelligentscheduling.smartcraft.runtime.SmartCraftServerTickHandler;
 
 import cpw.mods.fml.common.Mod;
 import cpw.mods.fml.common.SidedProxy;
@@ -32,6 +39,25 @@ public class AE2IntelligentScheduling {
     public static final SmartCraftOrderManager SMART_CRAFT_ORDER_MANAGER = new SmartCraftOrderManager();
     public static final SmartCraftOrderSyncService SMART_CRAFT_ORDER_SYNC = new SmartCraftOrderSyncService(
         SMART_CRAFT_ORDER_MANAGER);
+    public static final SmartCraftAe2RuntimeSessionFactory SMART_CRAFT_SESSION_FACTORY = new SmartCraftAe2RuntimeSessionFactory();
+    public static final SmartCraftRuntimeCoordinator SMART_CRAFT_RUNTIME = new SmartCraftRuntimeCoordinator(
+        SMART_CRAFT_ORDER_MANAGER,
+        new Ae2CpuSelector(),
+        new Ae2SmartCraftJobPlanner(),
+        (session, task, cpu, job) -> new Ae2CraftSubmitter().submit(
+            session.craftingGrid(),
+            job,
+            task,
+            cpu,
+            session.requesterBridge(),
+            session.actionSource()),
+        (session, orderId) -> {
+            if (session != null && session.owner() != null) {
+                SMART_CRAFT_ORDER_SYNC.sync(session.owner(), orderId);
+            }
+        });
+    public static final SmartCraftServerTickHandler SMART_CRAFT_TICK_HANDLER = new SmartCraftServerTickHandler(
+        SMART_CRAFT_RUNTIME);
 
     @Mod.Instance
     public static AE2IntelligentScheduling instance;

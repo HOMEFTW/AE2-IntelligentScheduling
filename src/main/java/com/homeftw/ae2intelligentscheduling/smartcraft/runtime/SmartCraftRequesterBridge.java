@@ -13,12 +13,18 @@ import appeng.api.networking.crafting.ICraftingLink;
 import appeng.api.networking.crafting.ICraftingRequester;
 import appeng.api.storage.data.IAEItemStack;
 import appeng.api.util.AECableType;
+import appeng.api.networking.security.IActionHost;
 
 import com.homeftw.ae2intelligentscheduling.smartcraft.model.SmartCraftTask;
 
 public final class SmartCraftRequesterBridge implements ICraftingRequester {
 
+    private final IActionHost delegateHost;
     private final Map<String, ICraftingLink> linksByTaskKey = new LinkedHashMap<String, ICraftingLink>();
+
+    public SmartCraftRequesterBridge(IActionHost delegateHost) {
+        this.delegateHost = delegateHost;
+    }
 
     public void track(SmartCraftTask task, ICraftingLink link) {
         if (task == null || link == null) {
@@ -53,20 +59,24 @@ public final class SmartCraftRequesterBridge implements ICraftingRequester {
 
     @Override
     public IGridNode getGridNode(ForgeDirection dir) {
-        return null;
+        return this.delegateHost == null ? null : this.delegateHost.getGridNode(dir);
     }
 
     @Override
     public AECableType getCableConnectionType(ForgeDirection dir) {
-        return AECableType.NONE;
+        return this.delegateHost == null ? AECableType.NONE : this.delegateHost.getCableConnectionType(dir);
     }
 
     @Override
-    public void securityBreak() {}
+    public void securityBreak() {
+        if (this.delegateHost != null) {
+            this.delegateHost.securityBreak();
+        }
+    }
 
     @Override
     public IGridNode getActionableNode() {
-        return null;
+        return this.delegateHost == null ? null : this.delegateHost.getActionableNode();
     }
 
     private void pruneFinishedLinks() {

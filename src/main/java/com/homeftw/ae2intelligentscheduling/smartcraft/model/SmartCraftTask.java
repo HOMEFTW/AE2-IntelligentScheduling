@@ -2,6 +2,7 @@ package com.homeftw.ae2intelligentscheduling.smartcraft.model;
 
 public final class SmartCraftTask {
 
+    private final String taskId;
     private final SmartCraftRequestKey requestKey;
     private final long amount;
     private final int depth;
@@ -12,6 +13,20 @@ public final class SmartCraftTask {
 
     public SmartCraftTask(SmartCraftRequestKey requestKey, long amount, int depth, int splitIndex, int splitCount,
             SmartCraftStatus status, String blockingReason) {
+        this(
+            requestKey == null ? "task:null" : requestKey.id() + "#" + depth + "#" + splitIndex + "/" + splitCount,
+            requestKey,
+            amount,
+            depth,
+            splitIndex,
+            splitCount,
+            status,
+            blockingReason);
+    }
+
+    public SmartCraftTask(String taskId, SmartCraftRequestKey requestKey, long amount, int depth, int splitIndex,
+            int splitCount, SmartCraftStatus status, String blockingReason) {
+        this.taskId = taskId;
         this.requestKey = requestKey;
         this.amount = amount;
         this.depth = depth;
@@ -19,6 +34,10 @@ public final class SmartCraftTask {
         this.splitCount = splitCount;
         this.status = status;
         this.blockingReason = blockingReason;
+    }
+
+    public String taskId() {
+        return this.taskId;
     }
 
     public SmartCraftRequestKey requestKey() {
@@ -50,7 +69,7 @@ public final class SmartCraftTask {
     }
 
     public String taskKey() {
-        return this.requestKey.id() + "#" + this.depth + "#" + this.splitIndex + "/" + this.splitCount;
+        return this.taskId;
     }
 
     public boolean isReadyForSubmission() {
@@ -68,6 +87,7 @@ public final class SmartCraftTask {
 
     public SmartCraftTask withStatus(SmartCraftStatus nextStatus, String nextBlockingReason) {
         return new SmartCraftTask(
+            this.taskId,
             this.requestKey,
             this.amount,
             this.depth,

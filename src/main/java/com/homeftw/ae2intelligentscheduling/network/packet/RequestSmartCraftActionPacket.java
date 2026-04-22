@@ -66,10 +66,10 @@ public final class RequestSmartCraftActionPacket implements IMessage {
 
             switch (message.getAction()) {
                 case CANCEL_ORDER:
-                    updated = AE2IntelligentScheduling.SMART_CRAFT_ORDER_MANAGER.cancel(message.getOrderId());
+                    updated = AE2IntelligentScheduling.SMART_CRAFT_RUNTIME.cancel(message.getOrderId());
                     break;
                 case RETRY_FAILED:
-                    updated = AE2IntelligentScheduling.SMART_CRAFT_ORDER_MANAGER.retryFailedTasks(message.getOrderId());
+                    updated = AE2IntelligentScheduling.SMART_CRAFT_RUNTIME.retryFailed(message.getOrderId());
                     break;
                 default:
                     updated = Optional.empty();

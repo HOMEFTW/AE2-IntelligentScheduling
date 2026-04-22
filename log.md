@@ -1,5 +1,32 @@
 # 开发日志
 
+## 2026-04-22：完成真实 AE2 下单链路与服务端运行态协调器
+
+### 已完成
+- 为 `SmartCraftTask` 增加稳定的 `taskId`，避免同层相同物品任务在运行态追踪时发生 key 冲突
+- 为 `Ae2RequestKey` 增加请求模板保存与 `createCraftRequest(long amount)`，支持从分析结果重建真实 AE2 下单请求
+- 新增 `SmartCraftRuntimeSession`、`SmartCraftRuntimeCoordinator`、`SmartCraftServerTickHandler`
+- 新增 `Ae2SmartCraftJobPlanner` 与 `SmartCraftAe2RuntimeSessionFactory`
+- `OpenSmartCraftPreviewPacket` 现在会在生成订单后自动注册运行态 session，不再只是静态预览
+- 服务端 tick 期间会执行 `beginCraftingJob -> Future 完成 -> submitJob -> ICraftingLink 轮询 -> task/order 状态回写`
+- `RequestSmartCraftActionPacket` 现在改为经过 `SMART_CRAFT_RUNTIME` 执行取消 / 重试，能影响真实运行中的 future 和 link
+- `SmartCraftRequesterBridge` 现在委托真实 `IActionHost`，使 AE2 crafting link 生命周期挂接在真实网络节点上
+- 新增 `SmartCraftRuntimeCoordinatorTest`
+- 验证 `./gradlew.bat --offline --no-daemon "-Pelytra.manifest.version=true" -DDISABLE_BUILDSCRIPT_UPDATE_CHECK=true -PautoUpdateBuildScript=false -PdisableSpotless=true test --tests com.homeftw.ae2intelligentscheduling.smartcraft.runtime.SmartCraftRuntimeCoordinatorTest --tests com.homeftw.ae2intelligentscheduling.smartcraft.runtime.SmartCraftSchedulerTest --tests com.homeftw.ae2intelligentscheduling.network.packet.SmartCraftPacketCodecTest` 通过
+- 验证 `./gradlew.bat --offline --no-daemon "-Pelytra.manifest.version=true" -DDISABLE_BUILDSCRIPT_UPDATE_CHECK=true -PautoUpdateBuildScript=false -PdisableSpotless=true test --tests com.homeftw.ae2intelligentscheduling.smartcraft.analysis.SmartCraftOrderBuilderTest --tests com.homeftw.ae2intelligentscheduling.integration.ae2.Ae2CraftTreeWalkerTest --tests com.homeftw.ae2intelligentscheduling.smartcraft.runtime.SmartCraftRuntimeCoordinatorTest` 通过
+
+### 遇到的问题
+- 当前仓库同时使用了 Elytra conventions，PowerShell 下带点的 Gradle 属性需要用引号传递 `"-Pelytra.manifest.version=true"` 才能正确命中本地 manifest 缓存
+- 真实运行态追踪要求 `ICraftingRequester` 绑定到有效 AE 网络节点；原先纯空壳 `SmartCraftRequesterBridge` 会让 link 生命周期不稳定
+- `SmartCraftTask.taskKey()` 之前依赖 `requestKey + depth + split`，遇到同层相同物品的重复任务时可能冲突
+
+### 设计决策
+- 运行态改为独立的服务端协调器推进，而不是把异步 `beginCraftingJob` 强行塞回现有同步 scheduler 接口
+- 真实 AE2 下单请求通过 `Ae2RequestKey` 保存的模板栈重建，先保证 item 任务链路跑通
+- 预览入口现在即是自动启动入口：生成订单后立即注册 session，由服务端 tick 按层推进
+
+---
+
 ## 2026-04-22：完成 Task 6 智能合成状态页骨架与同步链路
 
 ### 已完成

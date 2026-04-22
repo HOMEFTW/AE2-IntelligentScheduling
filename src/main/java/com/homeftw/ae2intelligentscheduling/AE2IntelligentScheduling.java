@@ -5,6 +5,7 @@ import org.apache.logging.log4j.Logger;
 
 import com.homeftw.ae2intelligentscheduling.config.Config;
 import com.homeftw.ae2intelligentscheduling.smartcraft.runtime.SmartCraftOrderManager;
+import com.homeftw.ae2intelligentscheduling.smartcraft.runtime.SmartCraftOrderSyncService;
 
 import cpw.mods.fml.common.Mod;
 import cpw.mods.fml.common.SidedProxy;
@@ -29,6 +30,8 @@ public class AE2IntelligentScheduling {
 
     public static final Logger LOG = LogManager.getLogger(MODID);
     public static final SmartCraftOrderManager SMART_CRAFT_ORDER_MANAGER = new SmartCraftOrderManager();
+    public static final SmartCraftOrderSyncService SMART_CRAFT_ORDER_SYNC = new SmartCraftOrderSyncService(
+        SMART_CRAFT_ORDER_MANAGER);
 
     @Mod.Instance
     public static AE2IntelligentScheduling instance;

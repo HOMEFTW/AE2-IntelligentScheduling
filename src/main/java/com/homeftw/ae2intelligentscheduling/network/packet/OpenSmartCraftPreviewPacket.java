@@ -3,6 +3,7 @@ package com.homeftw.ae2intelligentscheduling.network.packet;
 import java.util.UUID;
 
 import net.minecraft.entity.player.EntityPlayer;
+import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.util.ChatComponentText;
 
 import com.homeftw.ae2intelligentscheduling.AE2IntelligentScheduling;
@@ -66,12 +67,19 @@ public final class OpenSmartCraftPreviewPacket implements IMessage {
         public IMessage onMessage(OpenSmartCraftPreviewPacket message, MessageContext ctx) {
             EntityPlayer player = ctx.getServerHandler().playerEntity;
 
-            if (!(player.openContainer instanceof ContainerCraftConfirm craftConfirm)) {
+            if (!(player.openContainer instanceof ContainerCraftConfirm)) {
                 return null;
             }
+            ContainerCraftConfirm craftConfirm = (ContainerCraftConfirm) player.openContainer;
 
             ICraftingJob craftingJob = ((ContainerCraftConfirmAccessor) craftConfirm).ae2is$getResult();
-            if (!(craftingJob instanceof CraftingJobV2 craftingJobV2) || craftingJobV2.originalRequest == null) {
+            if (!(craftingJob instanceof CraftingJobV2)) {
+                player.addChatMessage(
+                    new ChatComponentText("\u667A\u80FD\u5408\u6210\u65E0\u6CD5\u542F\u52A8\uFF1AAE2 \u5408\u6210\u8BA1\u5212\u5C1A\u672A\u51C6\u5907\u5B8C\u6210"));
+                return null;
+            }
+            CraftingJobV2 craftingJobV2 = (CraftingJobV2) craftingJob;
+            if (craftingJobV2.originalRequest == null) {
                 player.addChatMessage(
                     new ChatComponentText("\u667A\u80FD\u5408\u6210\u65E0\u6CD5\u542F\u52A8\uFF1AAE2 \u5408\u6210\u8BA1\u5212\u5C1A\u672A\u51C6\u5907\u5B8C\u6210"));
                 return null;
@@ -80,15 +88,9 @@ public final class OpenSmartCraftPreviewPacket implements IMessage {
             SmartCraftOrder order = new SmartCraftOrderBuilder()
                     .build(new Ae2CraftingJobSnapshotFactory().fromRequest(craftingJobV2.originalRequest));
             UUID trackedOrderId = AE2IntelligentScheduling.SMART_CRAFT_ORDER_MANAGER.track(order);
-
-            player.addChatMessage(
-                new ChatComponentText(
-                    "\u667A\u80FD\u5408\u6210\u9884\u89C8\u5DF2\u521B\u5EFA: "
-                            + trackedOrderId
-                            + " | scale="
-                            + order.orderScale()
-                            + " | layers="
-                            + order.layers().size()));
+            if (player instanceof EntityPlayerMP) {
+                AE2IntelligentScheduling.SMART_CRAFT_ORDER_SYNC.sync((EntityPlayerMP) player, trackedOrderId);
+            }
 
             AE2IntelligentScheduling.LOG.info(
                 "Created smart craft preview {} for {} with scale {} and {} layers",

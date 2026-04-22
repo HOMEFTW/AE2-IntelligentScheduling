@@ -5,7 +5,7 @@
 - Mod ID: `ae2intelligentscheduling`
 - Package: `com.homeftw.ae2intelligentscheduling`
 - Target: Minecraft 1.7.10 + GTNH + AE2
-- 当前阶段：已完成项目脚手架、纯规划模型、AE2 合成树快照、运行态调度骨架，以及 AE2 智能合成按钮与预览入口
+- 当前阶段：已完成项目脚手架、纯规划模型、AE2 合成树快照、运行态调度骨架、AE2 智能合成按钮与预览入口，以及最小可用的智能合成状态页骨架
 
 ## 已实现内容
 
@@ -51,16 +51,28 @@
 - 当前层全部完成后再进入下一层
 - 无空闲 CPU 时将任务标记为 `WAITING_CPU`
 - 有空闲 CPU 时通过提交回调将任务标记为 `RUNNING`
+- `SmartCraftOrderManager` 当前支持 `track(UUID)`、`cancel(UUID)`、`retryFailedTasks(UUID)` 与整单 layer 替换
 - 已验证 `SmartCraftSchedulerTest` 通过
 
 ### AE2 智能合成入口
 - 已创建 `NetworkHandler`
 - 已创建 `OpenSmartCraftPreviewPacket`
+- 已创建 `RequestSmartCraftActionPacket`
+- 已创建 `SyncSmartCraftOrderPacket`
 - 已创建 `GuiCraftConfirmMixin`
 - `GuiCraftConfirmMixin` 当前会向 AE2 合成确认界面注入 `智能合成` 按钮
 - 客户端点击 `智能合成` 后会发送本模组自定义 packet，而不是走 AE2 的 `PacketValueConfig("Terminal.Start", ...)`
 - 服务端当前会读取 `ContainerCraftConfirm` 中现有的 `CraftingJobV2`，分析生成 `SmartCraftOrder` 并登记到 `AE2IntelligentScheduling.SMART_CRAFT_ORDER_MANAGER`
+- 服务端在登记订单后会通过 `SmartCraftOrderSyncService` 下发 `SyncSmartCraftOrderPacket`，直接打开本模组状态页
 - 已验证 `SmartCraftPacketCodecTest` 通过
+
+### 状态页与订单同步
+- 已创建 `SmartCraftOrderSyncService`
+- 已创建 `GuiSmartCraftStatus`
+- 已创建 `SmartCraftTaskList`
+- `GuiSmartCraftStatus` 当前展示订单 ID、目标物品、量级、状态、当前层与扁平任务列表
+- 状态页当前支持 `取消整单` 与 `重试失败` 两个动作按钮，并通过 `RequestSmartCraftActionPacket` 回传到服务端
+- 当前状态页仍属于最小实现：尚未提供滚动列表、自动轮询刷新或真实 AE2 job 运行态进度回填
 
 ### 配置项
 | Key | Default | Description |
@@ -92,19 +104,19 @@
 - `LARGE`：最大节点缺口 `>= 16g`
 - `SMALL` 拆分规则：
 - `< 1g`：1 个 task / 1 个 CPU
-- `>= 1g` 且 `< 2.1g`：2 个 task / 2 个 CPU
-- `>= 2.1g`：3 个 task / 3 个 CPU
+- `>= 1g` 且 `< 2.1g`：1 个 task / 2 个 CPU
+- `>= 2.1g`：1 个 task / 3 个 CPU
 - `MEDIUM` 拆分规则：
 - `< 1g`：1 个 task / 1 个 CPU
-- `>= 1g` 且 `< 2.1g`：2 个 task / 2 个 CPU
-- `>= 2.1g` 且 `< 4g`：3 个 task / 3 个 CPU
-- `>= 4g` 且 `< 8g`：4 个 task / 4 个 CPU
-- `>= 8g` 且 `< 16g`：6 个 task / 6 个 CPU
+- `>= 1g` 且 `< 2.1g`：1 个 task / 2 个 CPU
+- `>= 2.1g` 且 `< 4g`：1 个 task / 3 个 CPU
+- `>= 4g` 且 `< 8g`：1 个 task / 4 个 CPU
+- `>= 8g` 且 `< 16g`：1 个 task / 6 个 CPU
 - `LARGE` 拆分规则：
 - `< 1g`：1 个 task / 1 个 CPU
-- `>= 1g` 且 `< 4g`：2 个 task / 2 个 CPU
-- `>= 4g` 且 `< 16g`：4 个 task / 4 个 CPU
-- `>= 16g` 且 `< 64g`：8 个 task / 8 个 CPU
+- `>= 1g` 且 `< 4g`：1 个 task / 2 个 CPU
+- `>= 4g` 且 `< 16g`：1 个 task / 4 个 CPU
+- `>= 16g` 且 `< 64g`：1 个 task / 8 个 CPU
 - `>= 64g`：16 个 task / 16 个 CPU
 - 拆分范围：整棵树中的中间产物和最终产物都递归拆分
 - 库存语义：先扣库存，只为缺口建队列
@@ -112,11 +124,12 @@
 - CPU 语义：自动选择当前空闲 CPU，并受“单节点最大 CPU 数”配置限制
 
 ## 架构备注
-- 推荐方案为“AE2 原 UI 注入 + 智能合成按钮 + 独立调度器内核”
+- 推荐方案是“AE2 原 UI 注入 + 智能合成按钮 + 独立调度器内核”
 - AE2 负责单个 job 的实际执行，本模组负责分析、拆分、排队、依赖控制与自动推进
 - 当前 AE2 集成基础层已经能把 `CraftingRequest` 树转换成 `SmartCraftOrderBuilder` 可消费的快照结构
-- 当前运行态调度层已具备层级推进与 CPU 等待语义，但尚未打通真实 `ICraftingJob` 提交与回写
-- 当前 UI 入口层已具备 `智能合成` 按钮与预览入口，但尚未实现状态 GUI、取消 / 重试按钮和真实执行回写
+- 当前运行态调度层已具备层级推进与 CPU 等待语义，但尚未打通真实 `ICraftingJob` 提交与回填
+- 当前 UI 入口层已具备 `智能合成` 按钮、预览入口与最小状态 GUI，并支持取消 / 重试动作回传
+- 当前状态页同步仍是“按事件推送”模式，尚未接入持续轮询或调度器驱动的实时刷新
 - 第一版不做运行中订单的跨重启无损恢复，服务器重启后应重新分析当前 AE 网络状态
 - 当前可参考本地 AE2 源码目录：`D:\Code\GTNH LIB\Applied-Energistics-2-Unofficial-rv3-beta-695-GTNH`
 - 当前已确认的关键 AE2 接入点包括 `GuiCraftConfirm`、`ContainerCraftConfirm`、`PacketValueConfig`、`ICraftingGrid`、`CraftingJobV2`、`CraftingRequest`、`CraftableItemResolver`

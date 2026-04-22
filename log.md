@@ -1,5 +1,30 @@
 # 开发日志
 
+## 2026-04-22：完成 Task 6 智能合成状态页骨架与同步链路
+
+### 已完成
+- 新增 `SmartCraftOrderSyncService`，用于按订单 ID 将 `SmartCraftOrder` 同步到客户端
+- 新增 `SyncSmartCraftOrderPacket`，把订单量级、状态、当前层与任务列表序列化到客户端状态页
+- 新增 `RequestSmartCraftActionPacket`，支持从客户端请求 `取消整单` 与 `重试失败`
+- 新增 `GuiSmartCraftStatus` 与 `SmartCraftTaskList`，提供最小可用的智能合成状态界面
+- `OpenSmartCraftPreviewPacket` 在服务端完成订单分析后会直接同步并打开本模组状态页，不影响 AE2 原始合成按钮
+- `SmartCraftOrderManager` 新增整单取消与失败任务重试入口，并补齐整批替换 `layers` 的能力
+- 修复 Task 6 新增代码中的 Java 8 不兼容写法，包括 pattern matching `instanceof` 与缺失导入
+- 验证 `./gradlew.bat --offline --no-daemon test --tests com.homeftw.ae2intelligentscheduling.network.packet.SmartCraftPacketCodecTest` 通过
+- 验证 `./gradlew.bat --offline --no-daemon test --tests com.homeftw.ae2intelligentscheduling.smartcraft.runtime.SmartCraftSchedulerTest --tests com.homeftw.ae2intelligentscheduling.network.packet.SmartCraftPacketCodecTest` 通过
+
+### 遇到的问题
+- Task 6 新增代码里混入了 Java 16+ 的 pattern matching `instanceof` 语法，和当前 GTNH/Java 8 目标不兼容
+- `SmartCraftOrderManager` 需要整体替换 `layers` 时，`SmartCraftOrder` 之前只支持单层替换，缺少整单重建入口
+- 终端查看中文文档时出现编码显示异常，需要以文件实际内容为准而不是控制台渲染
+
+### 设计决策
+- 状态页先做“最小闭环”：预览分析完成后即可打开页面，并支持取消/重试的端到端 packet 回传
+- Task 级展示当前先复用扁平任务列表，不提前引入树形 UI、滚动容器或复杂交互
+- 文档与代码状态保持一致：本阶段只确认状态页骨架与同步链路完成，真实 `ICraftingJob` 运行态回填仍留在后续任务
+
+---
+
 ## 2026-04-22：完成 Task 5 AE2 智能合成按钮与预览入口
 
 ### 已完成
@@ -16,7 +41,7 @@
 
 ### 设计决策
 - `智能合成` 按钮放在 AE2 合成确认 UI 中的独立位置，避免影响原始 `Start` 按钮和原有行为
-- AE2 预览入口当前先做“点击后分析并登记订单”的最小闭环，状态 GUI 与真实执行反馈留到后续任务接上
+- AE2 预览入口当前先做“点击后分析并登记订单”的最小闭环，状态 GUI 与真实执行反馈留到后续任务接入
 - AE2 第三方目标 mixin 明确使用 `remap = false`，避免对非原版目标做错误映射
 
 ---
@@ -34,7 +59,7 @@
 - 当前阶段尚未把真实 `ICraftingJob` 绑定进 `SmartCraftTask`，因此调度器需要先以可测试的提交抽象运行，避免过早和 UI / packet 链路耦死
 
 ### 设计决策
-- 调度器当前以“当前层完成才推进下一层”为硬约束，先保证依赖顺序正确，再继续接 UI 与真实下单链路
+- 调度器当前以“当前层完成后才推进下一层”为硬约束，先保证依赖顺序正确，再继续接 UI 与真实下单链路
 - CPU 选择先采用最小可用策略：从空闲 CPU 列表中顺序挑选，避免在运行态骨架阶段过早引入复杂负载均衡
 
 ---
@@ -48,7 +73,7 @@
 - 验证 `./gradlew.bat --offline --no-daemon test --tests com.homeftw.ae2intelligentscheduling.smartcraft.analysis.SmartCraftOrderBuilderTest --tests com.homeftw.ae2intelligentscheduling.integration.ae2.Ae2CraftTreeWalkerTest` 通过
 
 ### 遇到的问题
-- `AEItemStack` 在普通 JUnit 环境中会隐式依赖 Minecraft / FML 引导流程，直接使用 `Items.*` 或 `Bootstrap.func_151354_b()` 都会导致测试失败
+- `AEItemStack` 在普通 JUnit 环境里会隐式依赖 Minecraft / FML 引导流程，直接使用 `Items.*` 或 `Bootstrap.func_151354_b()` 都会导致测试失败
 - Gradle 测试在沙箱内无法直接使用真实 GTNH 缓存，需要切换到可访问本机缓存的验证方式
 
 ### 设计决策
@@ -64,7 +89,7 @@
 - 新增 `SmartCraftOrderScale`、`SmartCraftStatus`、`SmartCraftNode`、`SmartCraftTask`、`SmartCraftLayer`、`SmartCraftOrder`
 - 新增 `SmartCraftRequestKey` 作为请求键抽象，为后续 `Ae2RequestKey` 接入留出稳定边界
 - 新增 `SmartCraftOrderScaleClassifier` 与 `SmartCraftSplitPlanner`
-- 新增 `SmartCraftSplitPlannerTest`，覆盖 `SMALL / MEDIUM / LARGE` 三挡规则
+- 新增 `SmartCraftSplitPlannerTest`，覆盖 `SMALL / MEDIUM / LARGE` 三档规则
 - 验证 `./gradlew.bat --offline test --tests com.homeftw.ae2intelligentscheduling.smartcraft.analysis.SmartCraftSplitPlannerTest` 通过
 
 ### 遇到的问题
@@ -72,7 +97,7 @@
 
 ### 设计决策
 - 规划模型当前先保持最小可用实现，优先服务 Task 3 的树转订单能力
-- 请求键先抽象为 `SmartCraftRequestKey` 接口，避免纯规划模型过早耦合到 AE2 具体类
+- 请求键先抽象成 `SmartCraftRequestKey` 接口，避免纯规划模型过早耦合到 AE2 具体类
 
 ---
 

@@ -1,2 +1,8 @@
 # AE2-IntelligentScheduling language placeholder
 gui.ae2intelligentscheduling.smartCraft=\u667A\u80FD\u5408\u6210
+gui.ae2intelligentscheduling.statusTitle=\u667A\u80FD\u5408\u6210\u72B6\u6001
+gui.ae2intelligentscheduling.cancelOrder=\u53D6\u6D88\u6574\u5355
+gui.ae2intelligentscheduling.retryFailed=\u91CD\u8BD5\u5931\u8D25
+gui.ae2intelligentscheduling.scale=\u91CF\u7EA7
+gui.ae2intelligentscheduling.status=\u72B6\u6001
+gui.ae2intelligentscheduling.currentLayer=\u5F53\u524D\u5C42

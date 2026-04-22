@@ -79,6 +79,16 @@ public final class SmartCraftOrder {
             this.currentLayerIndex);
     }
 
+    public SmartCraftOrder withLayers(List<SmartCraftLayer> nextLayers) {
+        return new SmartCraftOrder(
+            this.targetRequestKey,
+            this.targetAmount,
+            this.orderScale,
+            this.status,
+            new ArrayList<SmartCraftLayer>(nextLayers),
+            this.currentLayerIndex);
+    }
+
     public SmartCraftOrder withLayer(int layerIndex, SmartCraftLayer nextLayer) {
         List<SmartCraftLayer> nextLayers = new ArrayList<SmartCraftLayer>(this.layers);
         nextLayers.set(layerIndex, nextLayer);

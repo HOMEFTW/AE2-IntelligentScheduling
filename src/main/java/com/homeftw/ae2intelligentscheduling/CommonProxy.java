@@ -1,5 +1,7 @@
 package com.homeftw.ae2intelligentscheduling;
 
+import com.homeftw.ae2intelligentscheduling.network.packet.SyncSmartCraftOrderPacket;
+
 import com.homeftw.ae2intelligentscheduling.network.NetworkHandler;
 
 import cpw.mods.fml.common.event.FMLInitializationEvent;
@@ -26,4 +28,6 @@ public class CommonProxy {
     public void serverStarting(FMLServerStartingEvent event) {}
 
     public void serverStarted(FMLServerStartedEvent event) {}
+
+    public void openSmartCraftStatus(SyncSmartCraftOrderPacket packet) {}
 }

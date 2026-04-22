@@ -12,5 +12,13 @@ public enum SmartCraftStatus {
     FAILED,
     PAUSED,
     CANCELLED,
-    COMPLETED
+    COMPLETED;
+
+    public boolean isTerminalTaskState() {
+        return this == DONE || this == FAILED || this == CANCELLED || this == COMPLETED;
+    }
+
+    public boolean isActiveTaskState() {
+        return this == SUBMITTING || this == RUNNING || this == VERIFYING_OUTPUT;
+    }
 }

@@ -24,4 +24,17 @@ public final class SmartCraftLayer {
     public List<SmartCraftTask> tasks() {
         return this.tasks;
     }
+
+    public SmartCraftLayer withTasks(List<SmartCraftTask> nextTasks) {
+        return new SmartCraftLayer(this.depth, new ArrayList<SmartCraftTask>(nextTasks));
+    }
+
+    public boolean isComplete() {
+        for (SmartCraftTask task : this.tasks) {
+            if (!task.isTerminal()) {
+                return false;
+            }
+        }
+        return true;
+    }
 }

@@ -56,4 +56,52 @@ public final class SmartCraftOrder {
     public int currentLayerIndex() {
         return this.currentLayerIndex;
     }
+
+    public SmartCraftLayer currentLayer() {
+        if (this.currentLayerIndex < 0 || this.currentLayerIndex >= this.layers.size()) {
+            return null;
+        }
+        return this.layers.get(this.currentLayerIndex);
+    }
+
+    public boolean isFinished() {
+        return this.currentLayerIndex >= this.layers.size() || this.status == SmartCraftStatus.COMPLETED
+                || this.status == SmartCraftStatus.CANCELLED || this.status == SmartCraftStatus.FAILED;
+    }
+
+    public SmartCraftOrder withStatus(SmartCraftStatus nextStatus) {
+        return new SmartCraftOrder(
+            this.targetRequestKey,
+            this.targetAmount,
+            this.orderScale,
+            nextStatus,
+            new ArrayList<SmartCraftLayer>(this.layers),
+            this.currentLayerIndex);
+    }
+
+    public SmartCraftOrder withLayer(int layerIndex, SmartCraftLayer nextLayer) {
+        List<SmartCraftLayer> nextLayers = new ArrayList<SmartCraftLayer>(this.layers);
+        nextLayers.set(layerIndex, nextLayer);
+        return new SmartCraftOrder(
+            this.targetRequestKey,
+            this.targetAmount,
+            this.orderScale,
+            this.status,
+            nextLayers,
+            this.currentLayerIndex);
+    }
+
+    public SmartCraftOrder withCurrentLayerIndex(int nextLayerIndex) {
+        return new SmartCraftOrder(
+            this.targetRequestKey,
+            this.targetAmount,
+            this.orderScale,
+            this.status,
+            new ArrayList<SmartCraftLayer>(this.layers),
+            nextLayerIndex);
+    }
+
+    public SmartCraftOrder advanceLayer() {
+        return withCurrentLayerIndex(this.currentLayerIndex + 1);
+    }
 }

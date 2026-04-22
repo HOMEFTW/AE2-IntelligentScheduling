@@ -5,7 +5,7 @@
 - Mod ID: `ae2intelligentscheduling`
 - Package: `com.homeftw.ae2intelligentscheduling`
 - Target: Minecraft 1.7.10 + GTNH + AE2
-- 当前阶段：已完成项目脚手架、纯规划模型，以及 AE2 合成树快照到智能订单的基础转换
+- 当前阶段：已完成项目脚手架、纯规划模型、AE2 合成树快照到智能订单的基础转换，以及运行态调度骨架
 
 ## 已实现内容
 
@@ -28,14 +28,29 @@
 - 已创建 `SmartCraftRequestKey` 抽象接口
 - 已创建 `SmartCraftOrderScaleClassifier`、`SmartCraftSplitPlanner`
 - 已创建 `SmartCraftOrderBuilder`
+- 已为 `SmartCraftTask`、`SmartCraftLayer`、`SmartCraftOrder`、`SmartCraftStatus` 补充运行态状态转换辅助方法
 - 已验证 `SmartCraftSplitPlannerTest` 与 `SmartCraftOrderBuilderTest` 通过
 
 ### AE2 集成基础
 - 已创建 `Ae2RequestKey`
 - 已创建 `Ae2CraftTreeWalker`
 - 已创建 `Ae2CraftingJobSnapshotFactory`
+- 已创建 `Ae2CpuSelector`
+- 已创建 `Ae2CraftSubmitter`
 - `Ae2CraftTreeWalker` 当前按 `CraftingRequest.usedResolvers -> CraftFromPatternTask.childRequests` 做只读遍历
-- 已验证 `Ae2CraftTreeWalkerTest` 通过
+- 已验证 `Ae2CraftTreeWalkerTest` 与 `Ae2CpuSelectorTest` 通过
+
+### 运行态调度骨架
+- 已创建 `SmartCraftRequesterBridge`
+- 已创建 `SmartCraftOrderManager`
+- 已创建 `SmartCraftScheduler`
+- 已创建 `SmartCraftStockVerifier`
+- `SmartCraftScheduler` 当前支持：
+- 只推进当前层
+- 当前层全部完成后再进入下一层
+- 无空闲 CPU 时将任务标记为 `WAITING_CPU`
+- 有空闲 CPU 时通过提交回调将任务标记为 `RUNNING`
+- 已验证 `SmartCraftSchedulerTest` 通过
 
 ### 机器 / 部件
 - 暂无代码实现
@@ -100,6 +115,7 @@
 - 推荐方案为“AE2 原 UI 注入 + 智能合成按钮 + 独立调度器内核”
 - AE2 负责单个 job 的实际执行，本模组负责分析、拆分、排队、依赖控制与自动推进
 - 当前 AE2 集成基础层已经能把 `CraftingRequest` 树转换成 `SmartCraftOrderBuilder` 可消费的快照结构
+- 当前运行态调度层已具备层级推进与 CPU 等待语义，但尚未打通真实 `ICraftingJob` 提交与回写
 - 第一版不做运行中订单的跨重启无损恢复，服务器重启后应重新分析当前 AE 网络状态
 - 当前可参考本地 AE2 源码目录：`D:\Code\GTNH LIB\Applied-Energistics-2-Unofficial-rv3-beta-695-GTNH`
 - 当前已确认的关键 AE2 接入点包括 `GuiCraftConfirm`、`ContainerCraftConfirm`、`PacketValueConfig`、`ICraftingGrid`、`CraftingJobV2`、`CraftingRequest`、`CraftableItemResolver`

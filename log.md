@@ -1,5 +1,23 @@
 # 开发日志
 
+## 2026-04-22：完成 Task 4 运行态调度骨架与 AE2 requester bridge
+
+### 已完成
+- 新增 `SmartCraftRequesterBridge`、`SmartCraftOrderManager`、`SmartCraftScheduler`、`SmartCraftStockVerifier`
+- 新增 `Ae2CpuSelector` 与 `Ae2CraftSubmitter`
+- 为 `SmartCraftTask`、`SmartCraftLayer`、`SmartCraftOrder`、`SmartCraftStatus` 补充运行态状态转换辅助方法
+- 新增 `Ae2CpuSelectorTest` 与 `SmartCraftSchedulerTest`
+- 验证 `./gradlew.bat --offline --no-daemon test --tests com.homeftw.ae2intelligentscheduling.integration.ae2.Ae2CpuSelectorTest --tests com.homeftw.ae2intelligentscheduling.smartcraft.runtime.SmartCraftSchedulerTest` 通过
+
+### 遇到的问题
+- 当前阶段尚未把真实 `ICraftingJob` 绑定进 `SmartCraftTask`，因此调度器需要先以可测试的提交抽象运行，避免过早和 UI / packet 链路耦死
+
+### 设计决策
+- 调度器当前以“当前层完成才推进下一层”为硬约束，先保证依赖顺序正确，再继续接 UI 与真实下单链路
+- CPU 选择先采用最小可用策略：从空闲 CPU 列表中顺序挑选，避免在运行态骨架阶段过早引入复杂负载均衡
+
+---
+
 ## 2026-04-22：完成 Task 3 AE2 合成树快照与智能订单构建
 
 ### 已完成

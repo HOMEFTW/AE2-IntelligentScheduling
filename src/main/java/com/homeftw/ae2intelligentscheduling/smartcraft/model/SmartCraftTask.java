@@ -48,4 +48,32 @@ public final class SmartCraftTask {
     public String blockingReason() {
         return this.blockingReason;
     }
+
+    public String taskKey() {
+        return this.requestKey.id() + "#" + this.depth + "#" + this.splitIndex + "/" + this.splitCount;
+    }
+
+    public boolean isReadyForSubmission() {
+        return this.status == SmartCraftStatus.PENDING || this.status == SmartCraftStatus.QUEUED
+                || this.status == SmartCraftStatus.WAITING_CPU;
+    }
+
+    public boolean isTerminal() {
+        return this.status.isTerminalTaskState();
+    }
+
+    public boolean isActive() {
+        return this.status.isActiveTaskState();
+    }
+
+    public SmartCraftTask withStatus(SmartCraftStatus nextStatus, String nextBlockingReason) {
+        return new SmartCraftTask(
+            this.requestKey,
+            this.amount,
+            this.depth,
+            this.splitIndex,
+            this.splitCount,
+            nextStatus,
+            nextBlockingReason);
+    }
 }

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a GTNH addon mod that adds a `智能合成` button to the AE2 craft-confirm UI, analyzes the full AE2 crafting tree, splits large intermediate/final deficits into 1/2/4/8/16 programmatic jobs by size tier, and executes them layer-by-layer across available crafting CPUs.
+**Goal:** Build a GTNH addon mod that adds a `智能合成` button to the AE2 craft-confirm UI, analyzes the full AE2 crafting tree, classifies each order as `SMALL / MEDIUM / LARGE` from the maximum node deficit in the tree, splits intermediate/final deficits into programmatic jobs by the matching policy, and executes them layer-by-layer across available crafting CPUs.
 
 **Architecture:** Keep AE2 responsible for single-job simulation and execution, while this mod owns planning, threshold splitting, order state, task scheduling, and UI. Read the crafted job from AE2's existing `ContainerCraftConfirm`, traverse `CraftingJobV2` / `CraftingRequest` resolver trees into our own immutable planning model, then submit tracked jobs back through `ICraftingGrid.submitJob(...)` using a dedicated `ICraftingRequester` bridge.
 
@@ -58,7 +58,9 @@ If naming must change, do it in Task 1 before any Java package is created.
 - `src/main/java/com/homeftw/ae2intelligentscheduling/smartcraft/model/SmartCraftTask.java`
 - `src/main/java/com/homeftw/ae2intelligentscheduling/smartcraft/model/SmartCraftLayer.java`
 - `src/main/java/com/homeftw/ae2intelligentscheduling/smartcraft/model/SmartCraftOrder.java`
+- `src/main/java/com/homeftw/ae2intelligentscheduling/smartcraft/model/SmartCraftOrderScale.java`
 - `src/main/java/com/homeftw/ae2intelligentscheduling/smartcraft/model/SmartCraftStatus.java`
+- `src/main/java/com/homeftw/ae2intelligentscheduling/smartcraft/analysis/SmartCraftOrderScaleClassifier.java`
 - `src/main/java/com/homeftw/ae2intelligentscheduling/smartcraft/analysis/SmartCraftSplitPlanner.java`
 - `src/main/java/com/homeftw/ae2intelligentscheduling/smartcraft/analysis/SmartCraftOrderBuilder.java`
 - `src/main/java/com/homeftw/ae2intelligentscheduling/smartcraft/runtime/SmartCraftOrderManager.java`
@@ -187,22 +189,38 @@ git commit -m "feat: scaffold AE2 intelligent scheduling mod"
 - Create: `src/main/java/com/homeftw/ae2intelligentscheduling/smartcraft/model/SmartCraftTask.java`
 - Create: `src/main/java/com/homeftw/ae2intelligentscheduling/smartcraft/model/SmartCraftLayer.java`
 - Create: `src/main/java/com/homeftw/ae2intelligentscheduling/smartcraft/model/SmartCraftOrder.java`
+- Create: `src/main/java/com/homeftw/ae2intelligentscheduling/smartcraft/model/SmartCraftOrderScale.java`
 - Create: `src/main/java/com/homeftw/ae2intelligentscheduling/smartcraft/model/SmartCraftStatus.java`
+- Create: `src/main/java/com/homeftw/ae2intelligentscheduling/smartcraft/analysis/SmartCraftOrderScaleClassifier.java`
 - Create: `src/main/java/com/homeftw/ae2intelligentscheduling/smartcraft/analysis/SmartCraftSplitPlanner.java`
 - Test: `src/test/java/com/homeftw/ae2intelligentscheduling/smartcraft/analysis/SmartCraftSplitPlannerTest.java`
 
-- [ ] **Step 1: Write the failing split-planner tests for the `1g / 4g / 16g / 64g` thresholds**
+- [ ] **Step 1: Write the failing classifier and split-planner tests for `SMALL / MEDIUM / LARGE`**
 
 ```java
 @Test
-void splits_one_g_into_two_tasks() {
-    List<Long> parts = SmartCraftSplitPlanner.splitAmount(1_000_000_000L);
+void classifies_int_max_as_medium_order() {
+    assertEquals(
+        SmartCraftOrderScale.MEDIUM,
+        SmartCraftOrderScaleClassifier.classify(2_147_483_647L));
+}
+
+@Test
+void splits_one_g_into_two_tasks_for_small_orders() {
+    List<Long> parts = SmartCraftSplitPlanner.splitAmount(SmartCraftOrderScale.SMALL, 1_000_000_000L);
     assertEquals(List.of(500_000_000L, 500_000_000L), parts);
 }
 
 @Test
-void splits_sixty_four_g_into_sixteen_tasks_with_exact_sum() {
-    List<Long> parts = SmartCraftSplitPlanner.splitAmount(64_000_000_000L);
+void splits_eight_g_into_six_tasks_for_medium_orders() {
+    List<Long> parts = SmartCraftSplitPlanner.splitAmount(SmartCraftOrderScale.MEDIUM, 8_000_000_000L);
+    assertEquals(6, parts.size());
+    assertEquals(8_000_000_000L, parts.stream().mapToLong(Long::longValue).sum());
+}
+
+@Test
+void splits_sixty_four_g_into_sixteen_tasks_for_large_orders() {
+    List<Long> parts = SmartCraftSplitPlanner.splitAmount(SmartCraftOrderScale.LARGE, 64_000_000_000L);
     assertEquals(16, parts.size());
     assertEquals(64_000_000_000L, parts.stream().mapToLong(Long::longValue).sum());
 }
@@ -224,24 +242,54 @@ Expected: FAIL with `SmartCraftSplitPlanner` missing
 public final class SmartCraftSplitPlanner {
 
     public static final long ONE_G = 1_000_000_000L;
+    public static final long INT_MAX_GAP = 2_147_483_647L;
+    public static final long EIGHT_G = 8_000_000_000L;
     public static final long FOUR_G = 4_000_000_000L;
     public static final long SIXTEEN_G = 16_000_000_000L;
     public static final long SIXTY_FOUR_G = 64_000_000_000L;
 
     private SmartCraftSplitPlanner() {}
 
-    public static List<Long> splitAmount(long missingAmount) {
+    public static List<Long> splitAmount(SmartCraftOrderScale scale, long missingAmount) {
         int partitions;
-        if (missingAmount >= SIXTY_FOUR_G) {
-            partitions = 16;
-        } else if (missingAmount >= SIXTEEN_G) {
-            partitions = 8;
-        } else if (missingAmount >= FOUR_G) {
-            partitions = 4;
-        } else if (missingAmount >= ONE_G) {
-            partitions = 2;
-        } else {
-            partitions = 1;
+        switch (scale) {
+            case SMALL:
+                if (missingAmount >= INT_MAX_GAP) {
+                    partitions = 3;
+                } else if (missingAmount >= ONE_G) {
+                    partitions = 2;
+                } else {
+                    partitions = 1;
+                }
+                break;
+            case MEDIUM:
+                if (missingAmount >= EIGHT_G) {
+                    partitions = 6;
+                } else if (missingAmount >= FOUR_G) {
+                    partitions = 4;
+                } else if (missingAmount >= INT_MAX_GAP) {
+                    partitions = 3;
+                } else if (missingAmount >= ONE_G) {
+                    partitions = 2;
+                } else {
+                    partitions = 1;
+                }
+                break;
+            case LARGE:
+                if (missingAmount >= SIXTY_FOUR_G) {
+                    partitions = 16;
+                } else if (missingAmount >= SIXTEEN_G) {
+                    partitions = 8;
+                } else if (missingAmount >= FOUR_G) {
+                    partitions = 4;
+                } else if (missingAmount >= ONE_G) {
+                    partitions = 2;
+                } else {
+                    partitions = 1;
+                }
+                break;
+            default:
+                throw new IllegalArgumentException("Unknown order scale: " + scale);
         }
         long base = missingAmount / partitions;
         long remainder = missingAmount % partitions;
@@ -291,6 +339,7 @@ void builds_bottom_up_layers_after_stock_deduction() {
 
     SmartCraftOrder order = new SmartCraftOrderBuilder().build(machineHull);
 
+    assertEquals(SmartCraftOrderScale.SMALL, order.orderScale());
     assertEquals(2, order.layers().size());
     assertEquals(2, order.layers().get(0).tasks().size());
     assertEquals("machine_hull", order.layers().get(1).tasks().get(0).requestKey().id());
@@ -311,20 +360,21 @@ Expected: FAIL with `SmartCraftOrderBuilder` missing
 
 ```java
 public SmartCraftOrder build(TreeNode root) {
+    SmartCraftOrderScale scale = SmartCraftOrderScaleClassifier.classify(findMaxMissing(root));
     List<SmartCraftLayer> layers = new ArrayList<>();
-    visit(root, 0, layers);
-    return SmartCraftOrder.queued(root.requestKey(), root.missingAmount(), layers);
+    visit(root, 0, scale, layers);
+    return SmartCraftOrder.queued(root.requestKey(), root.missingAmount(), scale, layers);
 }
 
-private void visit(TreeNode node, int depth, List<SmartCraftLayer> layers) {
+private void visit(TreeNode node, int depth, SmartCraftOrderScale scale, List<SmartCraftLayer> layers) {
     for (TreeNode child : node.children()) {
-        visit(child, depth + 1, layers);
+        visit(child, depth + 1, scale, layers);
     }
     long missing = Math.max(0L, node.requestedAmount() - node.availableAmount());
     if (missing == 0L) {
         return;
     }
-    ensureLayer(layers, depth).tasks().addAll(toTasks(node.requestKey(), missing, depth));
+    ensureLayer(layers, depth).tasks().addAll(toTasks(node.requestKey(), missing, depth, scale));
 }
 ```
 
@@ -641,7 +691,7 @@ git commit -m "feat: add smart craft status UI and control actions"
 - Added `智能合成` button: Task 5
 - Recursive tree analysis: Task 3
 - Deduct current AE stock before queue generation: Task 3
-- Threshold split rules for `1g / 4g / 16g / 64g`: Task 2
+- Order-scale classification plus split rules for small / medium / large orders: Task 2 and Task 3
 - Layered bottom-up scheduling: Task 4
 - Auto-pick free CPUs: Task 4
 - Pause/cancel/retry and status UI: Task 6

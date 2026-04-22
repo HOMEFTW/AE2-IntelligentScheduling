@@ -2,10 +2,10 @@
 
 ## 基本信息
 - Mod Name: AE2-IntelligentScheduling
-- Mod ID: `ae2intelligentscheduling`（计划默认值）
-- Package: `com.homeftw.ae2intelligentscheduling`（计划默认值）
+- Mod ID: `ae2intelligentscheduling`
+- Package: `com.homeftw.ae2intelligentscheduling`
 - Target: Minecraft 1.7.10 + GTNH + AE2
-- 当前阶段：已完成项目脚手架与纯规划模型，开始进入 AE2 树转订单实现阶段
+- 当前阶段：已完成项目脚手架、纯规划模型，以及 AE2 合成树快照到智能订单的基础转换
 
 ## 已实现内容
 
@@ -26,8 +26,16 @@
 - 已创建 `SmartCraftOrderScale`、`SmartCraftStatus`
 - 已创建 `SmartCraftNode`、`SmartCraftTask`、`SmartCraftLayer`、`SmartCraftOrder`
 - 已创建 `SmartCraftRequestKey` 抽象接口
-- 已创建 `SmartCraftOrderScaleClassifier` 与 `SmartCraftSplitPlanner`
-- 已验证 `SmartCraftSplitPlannerTest` 通过
+- 已创建 `SmartCraftOrderScaleClassifier`、`SmartCraftSplitPlanner`
+- 已创建 `SmartCraftOrderBuilder`
+- 已验证 `SmartCraftSplitPlannerTest` 与 `SmartCraftOrderBuilderTest` 通过
+
+### AE2 集成基础
+- 已创建 `Ae2RequestKey`
+- 已创建 `Ae2CraftTreeWalker`
+- 已创建 `Ae2CraftingJobSnapshotFactory`
+- `Ae2CraftTreeWalker` 当前按 `CraftingRequest.usedResolvers -> CraftFromPatternTask.childRequests` 做只读遍历
+- 已验证 `Ae2CraftTreeWalkerTest` 通过
 
 ### 机器 / 部件
 - 暂无代码实现
@@ -58,7 +66,7 @@
 - 对达到阈值的中间产物和最终产物执行拆分
 - 生成按依赖分层的智能合成队列
 - 自动使用当前空闲 CPU 进行程序性下单
-- 下层完成后自动推进上一级，直到最终产物
+- 下层完成后自动推进上一层，直到最终产物完成
 
 ## 已确认规则
 - `1g = 1,000,000,000`
@@ -67,17 +75,17 @@
 - `SMALL`：最大节点缺口 `< 2.1g`
 - `MEDIUM`：最大节点缺口 `>= 2.1g` 且 `< 16g`
 - `LARGE`：最大节点缺口 `>= 16g`
-- `SMALL` 订单拆分：
+- `SMALL` 拆分规则：
 - `< 1g`：1 个 task / 1 个 CPU
 - `>= 1g` 且 `< 2.1g`：2 个 task / 2 个 CPU
 - `>= 2.1g`：3 个 task / 3 个 CPU
-- `MEDIUM` 订单拆分：
+- `MEDIUM` 拆分规则：
 - `< 1g`：1 个 task / 1 个 CPU
 - `>= 1g` 且 `< 2.1g`：2 个 task / 2 个 CPU
 - `>= 2.1g` 且 `< 4g`：3 个 task / 3 个 CPU
 - `>= 4g` 且 `< 8g`：4 个 task / 4 个 CPU
 - `>= 8g` 且 `< 16g`：6 个 task / 6 个 CPU
-- `LARGE` 订单拆分：
+- `LARGE` 拆分规则：
 - `< 1g`：1 个 task / 1 个 CPU
 - `>= 1g` 且 `< 4g`：2 个 task / 2 个 CPU
 - `>= 4g` 且 `< 16g`：4 个 task / 4 个 CPU
@@ -90,8 +98,9 @@
 
 ## 架构备注
 - 推荐方案为“AE2 原 UI 注入 + 智能合成按钮 + 独立调度器内核”
-- AE2 负责单个 job 实际执行，本模组负责分析、拆分、排队、依赖控制与自动推进
+- AE2 负责单个 job 的实际执行，本模组负责分析、拆分、排队、依赖控制与自动推进
+- 当前 AE2 集成基础层已经能把 `CraftingRequest` 树转换成 `SmartCraftOrderBuilder` 可消费的快照结构
 - 第一版不做运行中订单的跨重启无损恢复，服务器重启后应重新分析当前 AE 网络状态
-- 当前已确认可参考本地 AE2 源码目录：`D:\Code\GTNH LIB\Applied-Energistics-2-Unofficial-rv3-beta-695-GTNH`
+- 当前可参考本地 AE2 源码目录：`D:\Code\GTNH LIB\Applied-Energistics-2-Unofficial-rv3-beta-695-GTNH`
 - 当前已确认的关键 AE2 接入点包括 `GuiCraftConfirm`、`ContainerCraftConfirm`、`PacketValueConfig`、`ICraftingGrid`、`CraftingJobV2`、`CraftingRequest`、`CraftableItemResolver`
-- 当前编译验证使用 `JDK 21` 运行 Gradle，AE2 编译依赖使用 `com.github.GTNewHorizons:Applied-Energistics-2-Unofficial:rv3-beta-695-GTNH:dev`
+- 当前编译与测试验证统一使用 `JDK 21` 运行 Gradle，AE2 依赖坐标使用 `com.github.GTNewHorizons:Applied-Energistics-2-Unofficial:rv3-beta-695-GTNH:dev`

@@ -18,17 +18,20 @@ class Ae2CpuSelectorTest {
 
     @Test
     void returns_first_idle_cpu_when_available() {
-        Optional<ICraftingCPU> selected = new Ae2CpuSelector().findIdleCpu(
-            Arrays.asList(cpu("busy", true), cpu("idle-1", false), cpu("idle-2", false)));
+        Optional<ICraftingCPU> selected = new Ae2CpuSelector()
+            .findIdleCpu(Arrays.asList(cpu("busy", true), cpu("idle-1", false), cpu("idle-2", false)));
 
         assertTrue(selected.isPresent());
-        assertEquals("idle-1", selected.get().getName());
+        assertEquals(
+            "idle-1",
+            selected.get()
+                .getName());
     }
 
     @Test
     void returns_empty_when_all_cpus_are_busy() {
-        Optional<ICraftingCPU> selected = new Ae2CpuSelector().findIdleCpu(
-            Arrays.asList(cpu("busy-1", true), cpu("busy-2", true)));
+        Optional<ICraftingCPU> selected = new Ae2CpuSelector()
+            .findIdleCpu(Arrays.asList(cpu("busy-1", true), cpu("busy-2", true)));
 
         assertFalse(selected.isPresent());
     }

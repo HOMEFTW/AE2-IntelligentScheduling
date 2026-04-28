@@ -5,12 +5,12 @@ import net.minecraft.item.ItemStack;
 import net.minecraftforge.fluids.Fluid;
 import net.minecraftforge.fluids.FluidStack;
 
+import com.homeftw.ae2intelligentscheduling.smartcraft.model.SmartCraftRequestKey;
+
 import appeng.api.AEApi;
 import appeng.api.storage.data.IAEFluidStack;
 import appeng.api.storage.data.IAEItemStack;
 import appeng.api.storage.data.IAEStack;
-
-import com.homeftw.ae2intelligentscheduling.smartcraft.model.SmartCraftRequestKey;
 
 public final class Ae2RequestKey implements SmartCraftRequestKey {
 
@@ -63,7 +63,9 @@ public final class Ae2RequestKey implements SmartCraftRequestKey {
             template.stackSize = 1;
         }
 
-        IAEItemStack request = AEApi.instance().storage().createItemStack(template);
+        IAEItemStack request = AEApi.instance()
+            .storage()
+            .createItemStack(template);
         if (request == null) {
             return null;
         }
@@ -76,5 +78,10 @@ public final class Ae2RequestKey implements SmartCraftRequestKey {
     @Override
     public String id() {
         return this.id;
+    }
+
+    @Override
+    public ItemStack itemStack() {
+        return this.itemTemplate;
     }
 }

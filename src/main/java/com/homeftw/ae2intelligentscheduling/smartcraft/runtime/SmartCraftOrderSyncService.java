@@ -18,11 +18,15 @@ public final class SmartCraftOrderSyncService {
     }
 
     public void sync(EntityPlayerMP player, UUID orderId) {
+        sync(player, orderId, null);
+    }
+
+    public void sync(EntityPlayerMP player, UUID orderId, SmartCraftRuntimeSession session) {
         Optional<SmartCraftOrder> order = this.orderManager.get(orderId);
         if (player == null || !order.isPresent()) {
             return;
         }
 
-        NetworkHandler.INSTANCE.sendTo(SyncSmartCraftOrderPacket.from(orderId, order.get()), player);
+        NetworkHandler.INSTANCE.sendTo(SyncSmartCraftOrderPacket.from(orderId, order.get(), session), player);
     }
 }

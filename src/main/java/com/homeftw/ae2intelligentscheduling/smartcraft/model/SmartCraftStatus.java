@@ -1,6 +1,7 @@
 package com.homeftw.ae2intelligentscheduling.smartcraft.model;
 
 public enum SmartCraftStatus {
+
     ANALYZING,
     QUEUED,
     PENDING,

@@ -13,9 +13,7 @@ class SmartCraftSplitPlannerTest {
 
     @Test
     void classifies_int_max_as_medium_order() {
-        assertEquals(
-            SmartCraftOrderScale.MEDIUM,
-            SmartCraftOrderScaleClassifier.classify(2_147_483_647L));
+        assertEquals(SmartCraftOrderScale.MEDIUM, SmartCraftOrderScaleClassifier.classify(2_147_483_647L));
     }
 
     @Test
@@ -28,13 +26,21 @@ class SmartCraftSplitPlannerTest {
     void splits_eight_g_into_six_tasks_for_medium_orders() {
         List<Long> parts = SmartCraftSplitPlanner.splitAmount(SmartCraftOrderScale.MEDIUM, 8_000_000_000L);
         assertEquals(6, parts.size());
-        assertEquals(8_000_000_000L, parts.stream().mapToLong(Long::longValue).sum());
+        assertEquals(
+            8_000_000_000L,
+            parts.stream()
+                .mapToLong(Long::longValue)
+                .sum());
     }
 
     @Test
     void splits_sixty_four_g_into_sixteen_tasks_for_large_orders() {
         List<Long> parts = SmartCraftSplitPlanner.splitAmount(SmartCraftOrderScale.LARGE, 64_000_000_000L);
         assertEquals(16, parts.size());
-        assertEquals(64_000_000_000L, parts.stream().mapToLong(Long::longValue).sum());
+        assertEquals(
+            64_000_000_000L,
+            parts.stream()
+                .mapToLong(Long::longValue)
+                .sum());
     }
 }

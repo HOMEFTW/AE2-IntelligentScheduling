@@ -2,12 +2,12 @@ package com.homeftw.ae2intelligentscheduling.integration.ae2;
 
 import java.util.concurrent.Future;
 
-import appeng.api.networking.crafting.ICraftingJob;
-import appeng.api.storage.data.IAEItemStack;
-
 import com.homeftw.ae2intelligentscheduling.smartcraft.model.SmartCraftTask;
 import com.homeftw.ae2intelligentscheduling.smartcraft.runtime.SmartCraftRuntimeCoordinator;
 import com.homeftw.ae2intelligentscheduling.smartcraft.runtime.SmartCraftRuntimeSession;
+
+import appeng.api.networking.crafting.ICraftingJob;
+import appeng.api.storage.data.IAEItemStack;
 
 public final class Ae2SmartCraftJobPlanner implements SmartCraftRuntimeCoordinator.JobPlanner {
 
@@ -23,6 +23,7 @@ public final class Ae2SmartCraftJobPlanner implements SmartCraftRuntimeCoordinat
             throw new IllegalArgumentException("Unable to create AE2 request for task " + task.taskKey());
         }
 
-        return session.craftingGrid().beginCraftingJob(session.world(), session.grid(), session.actionSource(), request, null);
+        return session.craftingGrid()
+            .beginCraftingJob(session.world(), session.grid(), session.actionSource(), request, null);
     }
 }

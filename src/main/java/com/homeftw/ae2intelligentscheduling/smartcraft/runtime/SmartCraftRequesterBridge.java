@@ -6,16 +6,15 @@ import java.util.Map;
 import net.minecraftforge.common.util.ForgeDirection;
 
 import com.google.common.collect.ImmutableSet;
+import com.homeftw.ae2intelligentscheduling.smartcraft.model.SmartCraftTask;
 
 import appeng.api.config.Actionable;
 import appeng.api.networking.IGridNode;
 import appeng.api.networking.crafting.ICraftingLink;
 import appeng.api.networking.crafting.ICraftingRequester;
+import appeng.api.networking.security.IActionHost;
 import appeng.api.storage.data.IAEItemStack;
 import appeng.api.util.AECableType;
-import appeng.api.networking.security.IActionHost;
-
-import com.homeftw.ae2intelligentscheduling.smartcraft.model.SmartCraftTask;
 
 public final class SmartCraftRequesterBridge implements ICraftingRequester {
 
@@ -45,7 +44,12 @@ public final class SmartCraftRequesterBridge implements ICraftingRequester {
 
     @Override
     public IAEItemStack injectCraftedItems(ICraftingLink link, IAEItemStack items, Actionable mode) {
-        return null;
+        // CRITICAL: return the FULL stack as "refused" so AE2 routes the crafted output to ME storage
+        // via Platform.poweredInsert(...). Returning null would tell AE2 the bridge accepted everything,
+        // and since this bridge has no real inventory the items would silently vanish. That bug
+        // manifested as "task submitted, link active, but stockVerifier never sees the product → stuck
+        // in VERIFYING_OUTPUT forever".
+        return items;
     }
 
     @Override
@@ -54,7 +58,8 @@ public final class SmartCraftRequesterBridge implements ICraftingRequester {
             return;
         }
         pruneFinishedLinks();
-        this.linksByTaskKey.values().remove(link);
+        this.linksByTaskKey.values()
+            .remove(link);
     }
 
     @Override
@@ -80,6 +85,7 @@ public final class SmartCraftRequesterBridge implements ICraftingRequester {
     }
 
     private void pruneFinishedLinks() {
-        this.linksByTaskKey.values().removeIf(link -> link == null || link.isDone() || link.isCanceled());
+        this.linksByTaskKey.values()
+            .removeIf(link -> link == null || link.isDone() || link.isCanceled());
     }
 }

@@ -45,29 +45,65 @@ public final class SmartCraftOrderManager {
             return Optional.empty();
         }
 
-        SmartCraftOrder cancelled = existing.get().withLayers(updateAllTasks(existing.get().layers(), true, false))
-                .withStatus(SmartCraftStatus.CANCELLED);
+        SmartCraftOrder cancelled = existing.get()
+            .withLayers(
+                updateAllTasks(
+                    existing.get()
+                        .layers(),
+                    true,
+                    false))
+            .withStatus(SmartCraftStatus.CANCELLED);
         this.orders.put(orderId, cancelled);
         return Optional.of(cancelled);
     }
 
+    /**
+     * Bring failed and cancelled tasks back into rotation. Reset to {@code PENDING} and clear the
+     * blocking reason so {@code dispatchReadyTasks} can plan them again. The order itself is bumped to
+     * {@code QUEUED} so the next tick picks it up — this is the single mechanism that makes a paused or
+     * cancelled order recoverable.
+     *
+     * <p>
+     * Returns the updated order, or {@link Optional#empty()} if the order is unknown or has nothing
+     * retriable (no FAILED / CANCELLED leaf tasks). The empty case lets callers know they should not
+     * spam UI sync packets.
+     */
     public Optional<SmartCraftOrder> retryFailedTasks(UUID orderId) {
         Optional<SmartCraftOrder> existing = get(orderId);
         if (!existing.isPresent()) {
             return Optional.empty();
         }
 
-        SmartCraftOrder retried = existing.get().withLayers(updateAllTasks(existing.get().layers(), false, true))
-                .withStatus(SmartCraftStatus.QUEUED);
+        SmartCraftOrder current = existing.get();
+        if (!hasRetriableTasks(current)) {
+            return Optional.empty();
+        }
+
+        SmartCraftOrder retried = current.withLayers(retryTerminalFailures(current.layers()))
+            .withStatus(SmartCraftStatus.QUEUED);
         this.orders.put(orderId, retried);
         return Optional.of(retried);
     }
 
-    private List<SmartCraftLayer> updateAllTasks(List<SmartCraftLayer> layers, boolean cancelActive, boolean retryFailed) {
+    private static boolean hasRetriableTasks(SmartCraftOrder order) {
+        for (SmartCraftLayer layer : order.layers()) {
+            for (SmartCraftTask task : layer.tasks()) {
+                if (task.status() == SmartCraftStatus.FAILED || task.status() == SmartCraftStatus.CANCELLED) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private List<SmartCraftLayer> updateAllTasks(List<SmartCraftLayer> layers, boolean cancelActive,
+        boolean retryFailed) {
         List<SmartCraftLayer> nextLayers = new ArrayList<SmartCraftLayer>(layers.size());
 
         for (SmartCraftLayer layer : layers) {
-            List<SmartCraftTask> nextTasks = new ArrayList<SmartCraftTask>(layer.tasks().size());
+            List<SmartCraftTask> nextTasks = new ArrayList<SmartCraftTask>(
+                layer.tasks()
+                    .size());
             for (SmartCraftTask task : layer.tasks()) {
                 SmartCraftTask nextTask = task;
                 if (cancelActive && !task.isTerminal()) {
@@ -80,6 +116,28 @@ public final class SmartCraftOrderManager {
             nextLayers.add(layer.withTasks(nextTasks));
         }
 
+        return nextLayers;
+    }
+
+    /**
+     * Variant of {@link #updateAllTasks} that revives both FAILED and CANCELLED tasks back to PENDING.
+     * Used by retry to make cancelled orders recoverable, not just paused ones.
+     */
+    private List<SmartCraftLayer> retryTerminalFailures(List<SmartCraftLayer> layers) {
+        List<SmartCraftLayer> nextLayers = new ArrayList<SmartCraftLayer>(layers.size());
+        for (SmartCraftLayer layer : layers) {
+            List<SmartCraftTask> nextTasks = new ArrayList<SmartCraftTask>(
+                layer.tasks()
+                    .size());
+            for (SmartCraftTask task : layer.tasks()) {
+                if (task.status() == SmartCraftStatus.FAILED || task.status() == SmartCraftStatus.CANCELLED) {
+                    nextTasks.add(task.withStatus(SmartCraftStatus.PENDING, null));
+                } else {
+                    nextTasks.add(task);
+                }
+            }
+            nextLayers.add(layer.withTasks(nextTasks));
+        }
         return nextLayers;
     }
 }

@@ -7,15 +7,15 @@ import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
 
-import io.netty.buffer.ByteBuf;
-import io.netty.buffer.Unpooled;
-
 import com.homeftw.ae2intelligentscheduling.smartcraft.model.SmartCraftLayer;
 import com.homeftw.ae2intelligentscheduling.smartcraft.model.SmartCraftOrder;
 import com.homeftw.ae2intelligentscheduling.smartcraft.model.SmartCraftOrderScale;
 import com.homeftw.ae2intelligentscheduling.smartcraft.model.SmartCraftRequestKey;
 import com.homeftw.ae2intelligentscheduling.smartcraft.model.SmartCraftStatus;
 import com.homeftw.ae2intelligentscheduling.smartcraft.model.SmartCraftTask;
+
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
 
 class SmartCraftPacketCodecTest {
 
@@ -34,6 +34,23 @@ class SmartCraftPacketCodecTest {
     }
 
     @Test
+    void action_packet_round_trips_refresh_action() {
+        UUID orderId = UUID.fromString("00000000-0000-0000-0000-000000000456");
+        RequestSmartCraftActionPacket packet = new RequestSmartCraftActionPacket(
+            orderId,
+            RequestSmartCraftActionPacket.Action.REFRESH_ORDER);
+        ByteBuf buf = Unpooled.buffer();
+
+        packet.toBytes(buf);
+
+        RequestSmartCraftActionPacket decoded = new RequestSmartCraftActionPacket();
+        decoded.fromBytes(buf);
+
+        assertEquals(orderId, decoded.getOrderId());
+        assertEquals(RequestSmartCraftActionPacket.Action.REFRESH_ORDER, decoded.getAction());
+    }
+
+    @Test
     void sync_packet_round_trips_layer_and_status() {
         SmartCraftOrder order = new SmartCraftOrder(
             new FakeRequestKey("processor"),
@@ -41,24 +58,31 @@ class SmartCraftPacketCodecTest {
             SmartCraftOrderScale.SMALL,
             SmartCraftStatus.RUNNING,
             Arrays.asList(
-                new SmartCraftLayer(0, Arrays.asList(new SmartCraftTask(
-                    new FakeRequestKey("processor_part"),
-                    512L,
+                new SmartCraftLayer(
                     0,
+                    Arrays.asList(
+                        new SmartCraftTask(
+                            new FakeRequestKey("processor_part"),
+                            512L,
+                            0,
+                            1,
+                            2,
+                            SmartCraftStatus.RUNNING,
+                            null))),
+                new SmartCraftLayer(
                     1,
-                    2,
-                    SmartCraftStatus.RUNNING,
-                    null))),
-                new SmartCraftLayer(1, Arrays.asList(new SmartCraftTask(
-                    new FakeRequestKey("processor"),
-                    1024L,
-                    1,
-                    1,
-                    1,
-                    SmartCraftStatus.PENDING,
-                    null)))),
+                    Arrays.asList(
+                        new SmartCraftTask(
+                            new FakeRequestKey("processor"),
+                            1024L,
+                            1,
+                            1,
+                            1,
+                            SmartCraftStatus.PENDING,
+                            null)))),
             0);
-        SyncSmartCraftOrderPacket packet = SyncSmartCraftOrderPacket.from(UUID.fromString("00000000-0000-0000-0000-000000000123"), order);
+        SyncSmartCraftOrderPacket packet = SyncSmartCraftOrderPacket
+            .from(UUID.fromString("00000000-0000-0000-0000-000000000123"), order);
         ByteBuf buf = Unpooled.buffer();
 
         packet.toBytes(buf);
@@ -68,7 +92,25 @@ class SmartCraftPacketCodecTest {
 
         assertEquals(packet.getStatus(), decoded.getStatus());
         assertEquals(packet.getCurrentLayer(), decoded.getCurrentLayer());
-        assertEquals(packet.getTasks().size(), decoded.getTasks().size());
+        assertEquals(
+            packet.getTasks()
+                .size(),
+            decoded.getTasks()
+                .size());
+        assertEquals(
+            packet.getTasks()
+                .get(0)
+                .executionState(),
+            decoded.getTasks()
+                .get(0)
+                .executionState());
+        assertEquals(
+            packet.getTasks()
+                .get(0)
+                .assignedCpuName(),
+            decoded.getTasks()
+                .get(0)
+                .assignedCpuName());
     }
 
     private static final class FakeRequestKey implements SmartCraftRequestKey {
@@ -82,6 +124,11 @@ class SmartCraftPacketCodecTest {
         @Override
         public String id() {
             return this.id;
+        }
+
+        @Override
+        public net.minecraft.item.ItemStack itemStack() {
+            return null;
         }
     }
 }

@@ -4,12 +4,9 @@
   "package": "com.homeftw.ae2intelligentscheduling.mixin",
   "target": "@env(DEFAULT)",
   "compatibilityLevel": "JAVA_8",
-  "mixins": [
-    "ae2.ContainerCraftConfirmAccessor",
-    "ae2.ContainerCraftConfirmInvoker"
-  ],
+  "mixins": [],
   "client": [
-    "ae2.GuiCraftConfirmMixin"
+    "minecraft.GuiContainerNeiManagerGuardMixin"
   ],
   "server": []
 }

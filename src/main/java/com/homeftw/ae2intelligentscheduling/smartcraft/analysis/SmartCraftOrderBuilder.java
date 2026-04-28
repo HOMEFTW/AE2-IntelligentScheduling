@@ -46,9 +46,8 @@ public final class SmartCraftOrderBuilder {
 
         long missingAmount = missingAmount(node);
         if (missingAmount > 0L) {
-            ensureLayer(layers, layerIndex)
-                    .tasks()
-                    .addAll(toTasks(node.requestKey(), missingAmount, layerIndex, scale, nextTaskId));
+            ensureLayer(layers, layerIndex).tasks()
+                .addAll(toTasks(node.requestKey(), missingAmount, layerIndex, scale, nextTaskId));
         }
 
         return layerIndex;
@@ -62,19 +61,21 @@ public final class SmartCraftOrderBuilder {
     }
 
     private List<SmartCraftTask> toTasks(SmartCraftRequestKey requestKey, long missingAmount, int depth,
-            SmartCraftOrderScale scale, int[] nextTaskId) {
+        SmartCraftOrderScale scale, int[] nextTaskId) {
         List<Long> parts = SmartCraftSplitPlanner.splitAmount(scale, missingAmount);
         List<SmartCraftTask> tasks = new ArrayList<>(parts.size());
         for (int i = 0; i < parts.size(); i++) {
-            tasks.add(new SmartCraftTask(
-                "task-" + nextTaskId[0]++,
-                requestKey,
-                parts.get(i).longValue(),
-                depth,
-                i + 1,
-                parts.size(),
-                SmartCraftStatus.PENDING,
-                null));
+            tasks.add(
+                new SmartCraftTask(
+                    "task-" + nextTaskId[0]++,
+                    requestKey,
+                    parts.get(i)
+                        .longValue(),
+                    depth,
+                    i + 1,
+                    parts.size(),
+                    SmartCraftStatus.PENDING,
+                    null));
         }
         return tasks;
     }

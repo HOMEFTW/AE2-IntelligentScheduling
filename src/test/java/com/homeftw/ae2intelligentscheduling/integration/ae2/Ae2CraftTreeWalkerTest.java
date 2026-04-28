@@ -16,12 +16,13 @@ import appeng.api.config.CraftingMode;
 import appeng.api.config.FuzzyMode;
 import appeng.api.networking.crafting.ICraftingPatternDetails;
 import appeng.api.storage.StorageChannel;
-import appeng.api.storage.data.IAETagCompound;
 import appeng.api.storage.data.IAEItemStack;
+import appeng.api.storage.data.IAETagCompound;
 import appeng.crafting.v2.CraftingRequest;
 import appeng.crafting.v2.CraftingRequest.SubstitutionMode;
 import appeng.crafting.v2.resolvers.CraftableItemResolver.CraftFromPatternTask;
 import appeng.crafting.v2.resolvers.CraftableItemResolver.RequestAndPerCraftAmount;
+import appeng.crafting.v2.resolvers.ExtractItemResolver.ExtractItemTask;
 import io.netty.buffer.ByteBuf;
 
 class Ae2CraftTreeWalkerTest {
@@ -37,20 +38,82 @@ class Ae2CraftTreeWalkerTest {
 
         CraftFromPatternTask rootTask = new CraftFromPatternTask(
             rootRequest,
-            new FakePattern(
-                stack(INPUT_ITEM, 1L),
-                stack(OUTPUT_ITEM, 1L)),
+            new FakePattern(stack(INPUT_ITEM, 1L), stack(OUTPUT_ITEM, 1L)),
             0,
             false,
             false);
         rootTask.loadChildren(Collections.singletonList(new RequestAndPerCraftAmount(childRequest, 1L)));
-        rootRequest.usedResolvers.add(new CraftingRequest.UsedResolverEntry<IAEItemStack>(rootRequest, rootTask, rootRequest.stack.copy()));
+        rootRequest.usedResolvers
+            .add(new CraftingRequest.UsedResolverEntry<IAEItemStack>(rootRequest, rootTask, rootRequest.stack.copy()));
 
         Ae2CraftTreeWalker.Ae2TreeNodeSnapshot snapshot = new Ae2CraftTreeWalker().walk(rootRequest);
 
         assertEquals(2L, snapshot.requestedAmount());
-        assertEquals(1, snapshot.children().size());
-        assertEquals(1_500_000_000L, snapshot.children().get(0).requestedAmount());
+        assertEquals(
+            1,
+            snapshot.children()
+                .size());
+        assertEquals(
+            1_500_000_000L,
+            snapshot.children()
+                .get(0)
+                .requestedAmount());
+    }
+
+    @Test
+    void available_from_storage_counts_only_extract_item_tasks() throws Exception {
+        CraftingRequest<IAEItemStack> rootRequest = request(OUTPUT_ITEM, 1000L);
+
+        IAEItemStack extractAmount = rootRequest.stack.copy();
+        extractAmount.setStackSize(300L);
+        ExtractItemTask extractTask = new ExtractItemTask(rootRequest);
+        rootRequest.usedResolvers
+            .add(new CraftingRequest.UsedResolverEntry<IAEItemStack>(rootRequest, extractTask, extractAmount));
+
+        CraftingRequest<IAEItemStack> childRequest = request(INPUT_ITEM, 700L);
+        CraftFromPatternTask craftTask = new CraftFromPatternTask(
+            rootRequest,
+            new FakePattern(stack(INPUT_ITEM, 1L), stack(OUTPUT_ITEM, 1L)),
+            0,
+            false,
+            false);
+        craftTask.loadChildren(Collections.singletonList(new RequestAndPerCraftAmount(childRequest, 1L)));
+        IAEItemStack craftAmount = rootRequest.stack.copy();
+        craftAmount.setStackSize(700L);
+        rootRequest.usedResolvers
+            .add(new CraftingRequest.UsedResolverEntry<IAEItemStack>(rootRequest, craftTask, craftAmount));
+
+        Ae2CraftTreeWalker.Ae2TreeNodeSnapshot snapshot = new Ae2CraftTreeWalker().walk(rootRequest);
+
+        assertEquals(1000L, snapshot.requestedAmount());
+        assertEquals(300L, snapshot.availableAmount());
+        assertEquals(700L, snapshot.requestedAmount() - snapshot.availableAmount());
+        assertEquals(
+            1,
+            snapshot.children()
+                .size());
+    }
+
+    @Test
+    void craft_only_order_has_zero_available() throws Exception {
+        CraftingRequest<IAEItemStack> rootRequest = request(OUTPUT_ITEM, 2000L);
+
+        CraftingRequest<IAEItemStack> childRequest = request(INPUT_ITEM, 2000L);
+        CraftFromPatternTask craftTask = new CraftFromPatternTask(
+            rootRequest,
+            new FakePattern(stack(INPUT_ITEM, 1L), stack(OUTPUT_ITEM, 1L)),
+            0,
+            false,
+            false);
+        craftTask.loadChildren(Collections.singletonList(new RequestAndPerCraftAmount(childRequest, 1L)));
+        rootRequest.usedResolvers
+            .add(new CraftingRequest.UsedResolverEntry<IAEItemStack>(rootRequest, craftTask, rootRequest.stack.copy()));
+
+        Ae2CraftTreeWalker.Ae2TreeNodeSnapshot snapshot = new Ae2CraftTreeWalker().walk(rootRequest);
+
+        assertEquals(2000L, snapshot.requestedAmount());
+        assertEquals(0L, snapshot.availableAmount());
+        assertEquals(2000L, snapshot.requestedAmount() - snapshot.availableAmount());
     }
 
     private static CraftingRequest<IAEItemStack> request(net.minecraft.item.Item item, long amount) {
@@ -200,12 +263,13 @@ class Ae2CraftTreeWalkerTest {
         @Override
         public boolean isSameType(IAEItemStack otherStack) {
             return otherStack != null && this.getItem() == otherStack.getItem()
-                    && this.getItemDamage() == otherStack.getItemDamage();
+                && this.getItemDamage() == otherStack.getItemDamage();
         }
 
         @Override
         public boolean isSameType(ItemStack stored) {
-            return stored != null && this.getItem() == stored.getItem() && this.getItemDamage() == stored.getItemDamage();
+            return stored != null && this.getItem() == stored.getItem()
+                && this.getItemDamage() == stored.getItemDamage();
         }
 
         @Override

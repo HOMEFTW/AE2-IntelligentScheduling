@@ -22,9 +22,24 @@ class SmartCraftOrderBuilderTest {
         SmartCraftOrder order = new SmartCraftOrderBuilder().build(machineHull);
 
         assertEquals(SmartCraftOrderScale.SMALL, order.orderScale());
-        assertEquals(2, order.layers().size());
-        assertEquals(2, order.layers().get(0).tasks().size());
-        assertEquals("machine_hull", order.layers().get(1).tasks().get(0).requestKey().id());
+        assertEquals(
+            2,
+            order.layers()
+                .size());
+        assertEquals(
+            2,
+            order.layers()
+                .get(0)
+                .tasks()
+                .size());
+        assertEquals(
+            "machine_hull",
+            order.layers()
+                .get(1)
+                .tasks()
+                .get(0)
+                .requestKey()
+                .id());
     }
 
     private static FakeTreeNode node(String id, long requestedAmount, long availableAmount, FakeTreeNode... children) {
@@ -77,6 +92,11 @@ class SmartCraftOrderBuilderTest {
         @Override
         public String id() {
             return this.id;
+        }
+
+        @Override
+        public net.minecraft.item.ItemStack itemStack() {
+            return null;
         }
     }
 }

@@ -18,7 +18,8 @@ public final class RequestSmartCraftActionPacket implements IMessage {
 
     public enum Action {
         CANCEL_ORDER,
-        RETRY_FAILED
+        RETRY_FAILED,
+        REFRESH_ORDER
     }
 
     private String orderId;
@@ -71,13 +72,20 @@ public final class RequestSmartCraftActionPacket implements IMessage {
                 case RETRY_FAILED:
                     updated = AE2IntelligentScheduling.SMART_CRAFT_RUNTIME.retryFailed(message.getOrderId());
                     break;
+                case REFRESH_ORDER:
+                    updated = AE2IntelligentScheduling.SMART_CRAFT_ORDER_MANAGER.get(message.getOrderId());
+                    break;
                 default:
                     updated = Optional.empty();
                     break;
             }
 
             if (updated.isPresent()) {
-                AE2IntelligentScheduling.SMART_CRAFT_ORDER_SYNC.sync(player, message.getOrderId());
+                AE2IntelligentScheduling.SMART_CRAFT_ORDER_SYNC.sync(
+                    player,
+                    message.getOrderId(),
+                    AE2IntelligentScheduling.SMART_CRAFT_RUNTIME.session(message.getOrderId())
+                        .orElse(null));
             }
             return null;
         }

@@ -4,13 +4,14 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
+import com.homeftw.ae2intelligentscheduling.smartcraft.analysis.SmartCraftOrderBuilder;
+import com.homeftw.ae2intelligentscheduling.smartcraft.model.SmartCraftRequestKey;
+
 import appeng.api.storage.data.IAEItemStack;
 import appeng.crafting.v2.CraftingRequest;
 import appeng.crafting.v2.CraftingRequest.UsedResolverEntry;
 import appeng.crafting.v2.resolvers.CraftableItemResolver.CraftFromPatternTask;
-
-import com.homeftw.ae2intelligentscheduling.smartcraft.analysis.SmartCraftOrderBuilder;
-import com.homeftw.ae2intelligentscheduling.smartcraft.model.SmartCraftRequestKey;
+import appeng.crafting.v2.resolvers.ExtractItemResolver.ExtractItemTask;
 
 public final class Ae2CraftTreeWalker {
 
@@ -20,7 +21,7 @@ public final class Ae2CraftTreeWalker {
         return new Ae2TreeNodeSnapshot(
             Ae2RequestKey.from(request.stack),
             request.stack.getStackSize(),
-            resolvedAmount(request),
+            availableFromStorage(request),
             children);
     }
 
@@ -35,8 +36,14 @@ public final class Ae2CraftTreeWalker {
         }
     }
 
-    private long resolvedAmount(CraftingRequest<IAEItemStack> request) {
-        return Math.max(0L, request.stack.getStackSize() - Math.max(0L, request.remainingToProcess));
+    private long availableFromStorage(CraftingRequest<IAEItemStack> request) {
+        long available = 0;
+        for (UsedResolverEntry<IAEItemStack> entry : request.usedResolvers) {
+            if (entry.task instanceof ExtractItemTask) {
+                available += entry.resolvedStack.getStackSize();
+            }
+        }
+        return available;
     }
 
     public static final class Ae2TreeNodeSnapshot implements SmartCraftOrderBuilder.TreeNode {
@@ -47,7 +54,7 @@ public final class Ae2CraftTreeWalker {
         private final List<Ae2TreeNodeSnapshot> children;
 
         public Ae2TreeNodeSnapshot(SmartCraftRequestKey requestKey, long requestedAmount, long availableAmount,
-                List<Ae2TreeNodeSnapshot> children) {
+            List<Ae2TreeNodeSnapshot> children) {
             this.requestKey = requestKey;
             this.requestedAmount = requestedAmount;
             this.availableAmount = availableAmount;

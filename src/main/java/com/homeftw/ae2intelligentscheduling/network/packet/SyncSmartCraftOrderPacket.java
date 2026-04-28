@@ -5,17 +5,20 @@ import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 
-import cpw.mods.fml.common.network.ByteBufUtils;
-import cpw.mods.fml.common.network.simpleimpl.IMessage;
-import cpw.mods.fml.common.network.simpleimpl.IMessageHandler;
-import cpw.mods.fml.common.network.simpleimpl.MessageContext;
-import io.netty.buffer.ByteBuf;
+import net.minecraft.item.ItemStack;
 
 import com.homeftw.ae2intelligentscheduling.AE2IntelligentScheduling;
 import com.homeftw.ae2intelligentscheduling.smartcraft.model.SmartCraftLayer;
 import com.homeftw.ae2intelligentscheduling.smartcraft.model.SmartCraftOrder;
 import com.homeftw.ae2intelligentscheduling.smartcraft.model.SmartCraftStatus;
 import com.homeftw.ae2intelligentscheduling.smartcraft.model.SmartCraftTask;
+import com.homeftw.ae2intelligentscheduling.smartcraft.runtime.SmartCraftRuntimeSession;
+
+import cpw.mods.fml.common.network.ByteBufUtils;
+import cpw.mods.fml.common.network.simpleimpl.IMessage;
+import cpw.mods.fml.common.network.simpleimpl.IMessageHandler;
+import cpw.mods.fml.common.network.simpleimpl.MessageContext;
+import io.netty.buffer.ByteBuf;
 
 public final class SyncSmartCraftOrderPacket implements IMessage {
 
@@ -28,9 +31,13 @@ public final class SyncSmartCraftOrderPacket implements IMessage {
         private final int splitCount;
         private final SmartCraftStatus status;
         private final String blockingReason;
+        private final String executionState;
+        private final String assignedCpuName;
+        private final ItemStack itemStack;
 
         public TaskView(String requestKeyId, long amount, int depth, int splitIndex, int splitCount,
-                SmartCraftStatus status, String blockingReason) {
+            SmartCraftStatus status, String blockingReason, String executionState, String assignedCpuName,
+            ItemStack itemStack) {
             this.requestKeyId = requestKeyId;
             this.amount = amount;
             this.depth = depth;
@@ -38,6 +45,9 @@ public final class SyncSmartCraftOrderPacket implements IMessage {
             this.splitCount = splitCount;
             this.status = status;
             this.blockingReason = blockingReason;
+            this.executionState = executionState;
+            this.assignedCpuName = assignedCpuName;
+            this.itemStack = itemStack;
         }
 
         public String requestKeyId() {
@@ -67,6 +77,18 @@ public final class SyncSmartCraftOrderPacket implements IMessage {
         public String blockingReason() {
             return this.blockingReason;
         }
+
+        public String executionState() {
+            return this.executionState;
+        }
+
+        public String assignedCpuName() {
+            return this.assignedCpuName;
+        }
+
+        public ItemStack itemStack() {
+            return this.itemStack;
+        }
     }
 
     private String orderId;
@@ -83,7 +105,7 @@ public final class SyncSmartCraftOrderPacket implements IMessage {
     }
 
     private SyncSmartCraftOrderPacket(String orderId, String targetRequestKeyId, long targetAmount, String orderScale,
-            String status, int currentLayer, int totalLayers, List<TaskView> tasks) {
+        String status, int currentLayer, int totalLayers, List<TaskView> tasks) {
         this.orderId = orderId;
         this.targetRequestKeyId = targetRequestKeyId;
         this.targetAmount = targetAmount;
@@ -95,28 +117,44 @@ public final class SyncSmartCraftOrderPacket implements IMessage {
     }
 
     public static SyncSmartCraftOrderPacket from(UUID orderId, SmartCraftOrder order) {
+        return from(orderId, order, null);
+    }
+
+    public static SyncSmartCraftOrderPacket from(UUID orderId, SmartCraftOrder order,
+        SmartCraftRuntimeSession session) {
         List<TaskView> views = new ArrayList<TaskView>();
         for (SmartCraftLayer layer : order.layers()) {
             for (SmartCraftTask task : layer.tasks()) {
-                views.add(new TaskView(
-                    task.requestKey().id(),
-                    task.amount(),
-                    task.depth(),
-                    task.splitIndex(),
-                    task.splitCount(),
-                    task.status(),
-                    task.blockingReason() == null ? "" : task.blockingReason()));
+                views.add(
+                    new TaskView(
+                        task.requestKey()
+                            .id(),
+                        task.amount(),
+                        task.depth(),
+                        task.splitIndex(),
+                        task.splitCount(),
+                        task.status(),
+                        task.blockingReason() == null ? "" : task.blockingReason(),
+                        executionStateOf(session, task),
+                        assignedCpuNameOf(session, task),
+                        task.requestKey() == null ? null
+                            : task.requestKey()
+                                .itemStack()));
             }
         }
 
         return new SyncSmartCraftOrderPacket(
             orderId.toString(),
-            order.targetRequestKey().id(),
+            order.targetRequestKey()
+                .id(),
             order.targetAmount(),
-            order.orderScale().name(),
-            order.status().name(),
+            order.orderScale()
+                .name(),
+            order.status()
+                .name(),
             order.currentLayerIndex(),
-            order.layers().size(),
+            order.layers()
+                .size(),
             views);
     }
 
@@ -165,14 +203,18 @@ public final class SyncSmartCraftOrderPacket implements IMessage {
         int taskCount = buf.readInt();
         this.tasks = new ArrayList<TaskView>(taskCount);
         for (int i = 0; i < taskCount; i++) {
-            this.tasks.add(new TaskView(
-                ByteBufUtils.readUTF8String(buf),
-                buf.readLong(),
-                buf.readInt(),
-                buf.readInt(),
-                buf.readInt(),
-                SmartCraftStatus.valueOf(ByteBufUtils.readUTF8String(buf)),
-                ByteBufUtils.readUTF8String(buf)));
+            this.tasks.add(
+                new TaskView(
+                    ByteBufUtils.readUTF8String(buf),
+                    buf.readLong(),
+                    buf.readInt(),
+                    buf.readInt(),
+                    buf.readInt(),
+                    SmartCraftStatus.valueOf(ByteBufUtils.readUTF8String(buf)),
+                    ByteBufUtils.readUTF8String(buf),
+                    ByteBufUtils.readUTF8String(buf),
+                    ByteBufUtils.readUTF8String(buf),
+                    ByteBufUtils.readItemStack(buf)));
         }
     }
 
@@ -193,9 +235,45 @@ public final class SyncSmartCraftOrderPacket implements IMessage {
             buf.writeInt(task.depth());
             buf.writeInt(task.splitIndex());
             buf.writeInt(task.splitCount());
-            ByteBufUtils.writeUTF8String(buf, task.status().name());
+            ByteBufUtils.writeUTF8String(
+                buf,
+                task.status()
+                    .name());
             ByteBufUtils.writeUTF8String(buf, task.blockingReason());
+            ByteBufUtils.writeUTF8String(buf, task.executionState());
+            ByteBufUtils.writeUTF8String(buf, task.assignedCpuName());
+            ByteBufUtils.writeItemStack(buf, task.itemStack());
         }
+    }
+
+    private static String executionStateOf(SmartCraftRuntimeSession session, SmartCraftTask task) {
+        SmartCraftRuntimeSession.TaskExecution execution = executionOf(session, task);
+        if (execution == null) {
+            return "";
+        }
+        if (execution.craftingLink() != null) {
+            return "SUBMITTED";
+        }
+        if (execution.plannedJob() != null) {
+            return "PLANNED";
+        }
+        if (execution.planningFuture() != null) {
+            return "PLANNING";
+        }
+        return "";
+    }
+
+    private static String assignedCpuNameOf(SmartCraftRuntimeSession session, SmartCraftTask task) {
+        SmartCraftRuntimeSession.TaskExecution execution = executionOf(session, task);
+        if (execution == null || execution.assignedCpuName() == null) {
+            return "";
+        }
+        return execution.assignedCpuName();
+    }
+
+    private static SmartCraftRuntimeSession.TaskExecution executionOf(SmartCraftRuntimeSession session,
+        SmartCraftTask task) {
+        return session == null || task == null ? null : session.executionFor(task);
     }
 
     public static final class Handler implements IMessageHandler<SyncSmartCraftOrderPacket, IMessage> {

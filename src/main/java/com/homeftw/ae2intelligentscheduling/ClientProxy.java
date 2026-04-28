@@ -1,8 +1,12 @@
 package com.homeftw.ae2intelligentscheduling;
 
 import net.minecraft.client.Minecraft;
+import net.minecraftforge.common.MinecraftForge;
 
 import com.homeftw.ae2intelligentscheduling.client.gui.GuiSmartCraftStatus;
+import com.homeftw.ae2intelligentscheduling.client.gui.SmartCraftConfirmGuiEventHandler;
+import com.homeftw.ae2intelligentscheduling.client.gui.SmartCraftScreenFlow;
+import com.homeftw.ae2intelligentscheduling.network.packet.SyncCpuDetailPacket;
 import com.homeftw.ae2intelligentscheduling.network.packet.SyncSmartCraftOrderPacket;
 
 import cpw.mods.fml.common.event.FMLInitializationEvent;
@@ -10,6 +14,8 @@ import cpw.mods.fml.common.event.FMLPostInitializationEvent;
 import cpw.mods.fml.common.event.FMLPreInitializationEvent;
 
 public class ClientProxy extends CommonProxy {
+
+    private static boolean openSmartCraftStatusOnNextSync = false;
 
     @Override
     public void preInit(FMLPreInitializationEvent event) {
@@ -19,6 +25,7 @@ public class ClientProxy extends CommonProxy {
     @Override
     public void init(FMLInitializationEvent event) {
         super.init(event);
+        MinecraftForge.EVENT_BUS.register(SmartCraftConfirmGuiEventHandler.INSTANCE);
     }
 
     @Override
@@ -28,21 +35,32 @@ public class ClientProxy extends CommonProxy {
 
     @Override
     public void openSmartCraftStatus(SyncSmartCraftOrderPacket packet) {
+        SmartCraftConfirmGuiEventHandler.OVERLAY.update(packet);
         Minecraft minecraft = Minecraft.getMinecraft();
         if (minecraft == null) {
             return;
         }
 
-        if (minecraft.currentScreen instanceof GuiSmartCraftStatus) {
-            GuiSmartCraftStatus existing = (GuiSmartCraftStatus) minecraft.currentScreen;
-            if (!existing.orderId().equals(packet.getOrderId())) {
-                minecraft.displayGuiScreen(new GuiSmartCraftStatus(packet));
-                return;
-            }
-            existing.update(packet);
-            return;
+        net.minecraft.client.gui.GuiScreen current = minecraft.currentScreen;
+        if (SmartCraftScreenFlow.shouldOpenDedicatedStatusScreen(
+            SmartCraftScreenFlow.kindOf(current),
+            consumeOpenSmartCraftStatusOnNextSync())) {
+            minecraft.displayGuiScreen(new GuiSmartCraftStatus(packet));
         }
+    }
 
-        minecraft.displayGuiScreen(new GuiSmartCraftStatus(packet));
+    @Override
+    public void updateCpuDetail(SyncCpuDetailPacket packet) {
+        SmartCraftConfirmGuiEventHandler.OVERLAY.updateCpuDetail(packet);
+    }
+
+    public static void requestOpenSmartCraftStatusOnNextSync() {
+        openSmartCraftStatusOnNextSync = true;
+    }
+
+    private static boolean consumeOpenSmartCraftStatusOnNextSync() {
+        boolean requested = openSmartCraftStatusOnNextSync;
+        openSmartCraftStatusOnNextSync = false;
+        return requested;
     }
 }

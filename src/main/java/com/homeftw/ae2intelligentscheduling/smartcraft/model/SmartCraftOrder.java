@@ -13,7 +13,7 @@ public final class SmartCraftOrder {
     private final int currentLayerIndex;
 
     public SmartCraftOrder(SmartCraftRequestKey targetRequestKey, long targetAmount, SmartCraftOrderScale orderScale,
-            SmartCraftStatus status, List<SmartCraftLayer> layers, int currentLayerIndex) {
+        SmartCraftStatus status, List<SmartCraftLayer> layers, int currentLayerIndex) {
         this.targetRequestKey = targetRequestKey;
         this.targetAmount = targetAmount;
         this.orderScale = orderScale;
@@ -23,7 +23,7 @@ public final class SmartCraftOrder {
     }
 
     public static SmartCraftOrder queued(SmartCraftRequestKey targetRequestKey, long targetAmount,
-            SmartCraftOrderScale orderScale, List<SmartCraftLayer> layers) {
+        SmartCraftOrderScale orderScale, List<SmartCraftLayer> layers) {
         return new SmartCraftOrder(
             targetRequestKey,
             targetAmount,
@@ -66,7 +66,8 @@ public final class SmartCraftOrder {
 
     public boolean isFinished() {
         return this.currentLayerIndex >= this.layers.size() || this.status == SmartCraftStatus.COMPLETED
-                || this.status == SmartCraftStatus.CANCELLED || this.status == SmartCraftStatus.FAILED;
+            || this.status == SmartCraftStatus.CANCELLED
+            || this.status == SmartCraftStatus.FAILED;
     }
 
     public SmartCraftOrder withStatus(SmartCraftStatus nextStatus) {

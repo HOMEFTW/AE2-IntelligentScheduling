@@ -14,7 +14,7 @@ public final class SmartCraftNode {
     private final List<SmartCraftNode> children;
 
     public SmartCraftNode(SmartCraftRequestKey requestKey, long requestedAmount, long availableAmount, int depth,
-            List<SmartCraftNode> children) {
+        List<SmartCraftNode> children) {
         this.requestKey = requestKey;
         this.requestedAmount = requestedAmount;
         this.availableAmount = availableAmount;

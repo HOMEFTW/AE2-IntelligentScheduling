@@ -12,7 +12,7 @@ public final class SmartCraftTask {
     private final String blockingReason;
 
     public SmartCraftTask(SmartCraftRequestKey requestKey, long amount, int depth, int splitIndex, int splitCount,
-            SmartCraftStatus status, String blockingReason) {
+        SmartCraftStatus status, String blockingReason) {
         this(
             requestKey == null ? "task:null" : requestKey.id() + "#" + depth + "#" + splitIndex + "/" + splitCount,
             requestKey,
@@ -25,7 +25,7 @@ public final class SmartCraftTask {
     }
 
     public SmartCraftTask(String taskId, SmartCraftRequestKey requestKey, long amount, int depth, int splitIndex,
-            int splitCount, SmartCraftStatus status, String blockingReason) {
+        int splitCount, SmartCraftStatus status, String blockingReason) {
         this.taskId = taskId;
         this.requestKey = requestKey;
         this.amount = amount;
@@ -74,7 +74,7 @@ public final class SmartCraftTask {
 
     public boolean isReadyForSubmission() {
         return this.status == SmartCraftStatus.PENDING || this.status == SmartCraftStatus.QUEUED
-                || this.status == SmartCraftStatus.WAITING_CPU;
+            || this.status == SmartCraftStatus.WAITING_CPU;
     }
 
     public boolean isTerminal() {

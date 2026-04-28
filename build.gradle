@@ -1,0 +1,43 @@
+//version: 1707058017
+//
+plugins {
+    id 'com.github.ElytraServers.elytra-conventions' version 'v1.1.2'
+    id 'com.gtnewhorizons.gtnhconvention'
+}
+
+import org.gradle.jvm.toolchain.JavaLanguageVersion
+import org.gradle.jvm.toolchain.JvmVendorSpec
+
+tasks.named('compileJava', JavaCompile).configure {
+    javaCompiler = javaToolchains.compilerFor {
+        languageVersion = JavaLanguageVersion.of(21)
+        vendor = JvmVendorSpec.AZUL
+    }
+}
+
+tasks.named('compileTestJava', JavaCompile).configure {
+    javaCompiler = javaToolchains.compilerFor {
+        languageVersion = JavaLanguageVersion.of(21)
+        vendor = JvmVendorSpec.AZUL
+    }
+}
+
+tasks.named('compileInjectedTagsJava', JavaCompile).configure {
+    javaCompiler = javaToolchains.compilerFor {
+        languageVersion = JavaLanguageVersion.of(21)
+        vendor = JvmVendorSpec.AZUL
+    }
+}
+
+minecraft {
+    extraRunJvmArguments.add("-Xmx4G")
+    extraRunJvmArguments.add("-Xms4G")
+}
+
+test {
+    useJUnitPlatform()
+    javaLauncher = javaToolchains.launcherFor {
+        languageVersion = JavaLanguageVersion.of(21)
+        vendor = JvmVendorSpec.AZUL
+    }
+}

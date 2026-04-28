@@ -1,5 +1,17 @@
 # 开发日志
 
+## 2026-04-22：将构建入口当前状态切回 Zulu21
+### 已完成
+- 确认实际工程位于 .worktrees/implement-smart-craft，并保留 gradle.properties 中 org.gradle.java.installations.fromEnv = JAVA_HOME 的构建入口。
+- 在工作树 gradle.properties 中补充说明，当前默认构建 JDK 期望为 JAVA_HOME 指向 Zulu21。
+- 保留腾讯云 Gradle 与 Maven 镜像配置，不回退镜像入口。
+
+### 决策记录
+- 项目继续通过 JAVA_HOME 切换构建 JDK，不在仓库中写死本机 JDK 路径。
+
+---
+
+
 ## 2026-04-22：加入小 / 中 / 大三挡订单分流
 
 ### 已完成

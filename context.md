@@ -5,6 +5,7 @@
 - Mod ID: `ae2intelligentscheduling`（计划默认值）
 - Package: `com.homeftw.ae2intelligentscheduling`（计划默认值）
 - Target: Minecraft 1.7.10 + GTNH + AE2
+- Build JDK: `JAVA_HOME` 指向 Zulu21；工作树 `implement-smart-craft/gradle.properties` 使用 `org.gradle.java.installations.fromEnv = JAVA_HOME`
 - 当前阶段：设计阶段，尚未开始代码实现
 
 ## 已实现内容

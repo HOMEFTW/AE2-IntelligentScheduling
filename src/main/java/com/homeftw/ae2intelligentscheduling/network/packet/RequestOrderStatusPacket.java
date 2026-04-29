@@ -24,8 +24,10 @@ public final class RequestOrderStatusPacket implements IMessage {
         @Override
         public IMessage onMessage(RequestOrderStatusPacket message, MessageContext ctx) {
             EntityPlayerMP player = ctx.getServerHandler().playerEntity;
-            // Find the most recent active order for this player and sync it
-            AE2IntelligentScheduling.SMART_CRAFT_RUNTIME.syncLatestOrderForPlayer(player);
+            // v0.1.7: ship the entire active-order list (all players, time-ordered). Client
+            // reconciles its tab bar from this packet. Empty list still ships so the client
+            // can clear stale tabs after every order ended.
+            AE2IntelligentScheduling.SMART_CRAFT_ORDER_SYNC.syncListTo(player);
             return null;
         }
     }

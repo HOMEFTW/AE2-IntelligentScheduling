@@ -7,6 +7,7 @@ import com.homeftw.ae2intelligentscheduling.client.gui.GuiSmartCraftStatus;
 import com.homeftw.ae2intelligentscheduling.client.gui.SmartCraftConfirmGuiEventHandler;
 import com.homeftw.ae2intelligentscheduling.client.gui.SmartCraftScreenFlow;
 import com.homeftw.ae2intelligentscheduling.network.packet.SyncCpuDetailPacket;
+import com.homeftw.ae2intelligentscheduling.network.packet.SyncSmartCraftOrderListPacket;
 import com.homeftw.ae2intelligentscheduling.network.packet.SyncSmartCraftOrderPacket;
 
 import cpw.mods.fml.common.event.FMLInitializationEvent;
@@ -47,6 +48,11 @@ public class ClientProxy extends CommonProxy {
             consumeOpenSmartCraftStatusOnNextSync())) {
             minecraft.displayGuiScreen(new GuiSmartCraftStatus(packet));
         }
+    }
+
+    @Override
+    public void applySmartCraftOrderList(SyncSmartCraftOrderListPacket packet) {
+        SmartCraftConfirmGuiEventHandler.OVERLAY.applyOrderList(packet);
     }
 
     @Override

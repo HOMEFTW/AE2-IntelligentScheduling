@@ -18,6 +18,13 @@ public final class RequestSmartCraftActionPacket implements IMessage {
 
     public enum Action {
         CANCEL_ORDER,
+        /**
+         * Soft cancel: leave already-RUNNING tasks alone, cancel only PENDING / SUBMITTING /
+         * WAITING_CPU. The order keeps ticking until the spared tasks naturally finish, at which
+         * point applyLayerStatus flips it to COMPLETED or PAUSED. Spares the intermediate
+         * materials AE2 has already invested in mid-flight crafts.
+         */
+        CANCEL_ORDER_SOFT,
         RETRY_FAILED,
         REFRESH_ORDER
     }
@@ -63,11 +70,27 @@ public final class RequestSmartCraftActionPacket implements IMessage {
         @Override
         public IMessage onMessage(RequestSmartCraftActionPacket message, MessageContext ctx) {
             EntityPlayerMP player = ctx.getServerHandler().playerEntity;
+            // (v0.1.9 G12) After a server restart the in-memory session map is empty even though
+            // the OrderManager has persisted orders. Best-effort rebuild before dispatching the
+            // action so retry / cancel / refresh actually drive the runtime forward instead of
+            // silently no-oping. Owner-gate inside attemptRebindSession ensures we never bind a
+            // different player to someone else's order. No-op when session is already present.
+            try {
+                AE2IntelligentScheduling.SMART_CRAFT_RUNTIME.attemptRebindSession(
+                    message.getOrderId(),
+                    player,
+                    AE2IntelligentScheduling.SMART_CRAFT_SESSION_FACTORY);
+            } catch (IllegalArgumentException e) {
+                // malformed orderId; downstream handlers will return Optional.empty() naturally.
+            }
             Optional<SmartCraftOrder> updated;
 
             switch (message.getAction()) {
                 case CANCEL_ORDER:
                     updated = AE2IntelligentScheduling.SMART_CRAFT_RUNTIME.cancel(message.getOrderId());
+                    break;
+                case CANCEL_ORDER_SOFT:
+                    updated = AE2IntelligentScheduling.SMART_CRAFT_RUNTIME.cancelGracefully(message.getOrderId());
                     break;
                 case RETRY_FAILED:
                     updated = AE2IntelligentScheduling.SMART_CRAFT_RUNTIME.retryFailed(message.getOrderId());
@@ -81,11 +104,11 @@ public final class RequestSmartCraftActionPacket implements IMessage {
             }
 
             if (updated.isPresent()) {
-                AE2IntelligentScheduling.SMART_CRAFT_ORDER_SYNC.sync(
-                    player,
-                    message.getOrderId(),
-                    AE2IntelligentScheduling.SMART_CRAFT_RUNTIME.session(message.getOrderId())
-                        .orElse(null));
+                // v0.1.7: push the entire list so the acting player's tab bar updates atomically
+                // (the affected order's status flips, and if it just terminated the next refresh
+                // tick will see it gone from the manager). The single-order sync used to be enough
+                // pre-v0.1.7 because the client only ever knew about one order at a time.
+                AE2IntelligentScheduling.SMART_CRAFT_ORDER_SYNC.syncListTo(player);
             }
             return null;
         }

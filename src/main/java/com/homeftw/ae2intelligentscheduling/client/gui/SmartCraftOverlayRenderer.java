@@ -2,7 +2,10 @@ package com.homeftw.ae2intelligentscheduling.client.gui;
 
 import java.text.DecimalFormat;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.FontRenderer;
@@ -19,6 +22,7 @@ import com.homeftw.ae2intelligentscheduling.network.NetworkHandler;
 import com.homeftw.ae2intelligentscheduling.network.packet.RequestCpuDetailPacket;
 import com.homeftw.ae2intelligentscheduling.network.packet.RequestSmartCraftActionPacket;
 import com.homeftw.ae2intelligentscheduling.network.packet.SyncCpuDetailPacket;
+import com.homeftw.ae2intelligentscheduling.network.packet.SyncSmartCraftOrderListPacket;
 import com.homeftw.ae2intelligentscheduling.network.packet.SyncSmartCraftOrderPacket;
 import com.homeftw.ae2intelligentscheduling.network.packet.SyncSmartCraftOrderPacket.TaskView;
 import com.homeftw.ae2intelligentscheduling.smartcraft.model.SmartCraftStatus;
@@ -38,23 +42,142 @@ public final class SmartCraftOverlayRenderer {
     private static final int YO = 22;
     private static final int LINE_HEIGHT = 10;
 
-    // Schedule list constants
-    public static final int LIST_ROW_HEIGHT = 12;
+    // Schedule list constants. LIST_ROW_HEIGHT controls the schedule list row size; bumped from
+    // 12 to 18 to fit the 16x16 ItemStack icon rendered by SmartCraftScheduleListWidget. The
+    // visible-rows / GUI-height math in SmartCraftStatusLayout automatically tracks this constant
+    // so widening rows simply gives the player a taller list area without touching layout code.
+    public static final int LIST_ROW_HEIGHT = SmartCraftScheduleListWidget.ROW_HEIGHT;
+    /**
+     * No longer used by the schedule list (widget renders rows directly). Kept in case other code paths reference it.
+     */
     public static final int LIST_BTN_WIDTH = 60;
+    /**
+     * No longer used by the schedule list (widget renders rows directly). Kept in case other code paths reference it.
+     */
     public static final int LIST_BTN_HEIGHT = 10;
 
     private static final DecimalFormat COMPACT_FMT = new DecimalFormat("0.#");
     private static final long K = 1_000L, M = 1_000_000L, G = 1_000_000_000L;
 
-    private SyncSmartCraftOrderPacket data;
+    /**
+     * v0.1.7 multi-order book-keeping. {@code orders} is keyed by UUID-as-string (matches
+     * {@link SyncSmartCraftOrderPacket#getOrderId()}) and is a LinkedHashMap so iteration order
+     * mirrors the server-side insertion order. {@code currentOrderId} is the tab the player has
+     * focused; when null no tab is selected (typically because the manager just emptied out).
+     */
+    private final LinkedHashMap<String, SyncSmartCraftOrderPacket> orders = new LinkedHashMap<String, SyncSmartCraftOrderPacket>();
+    private String currentOrderId;
     private SyncCpuDetailPacket cpuDetail;
     private String selectedCpuName; // null = overview mode
     private int selectedTaskIndex = -1; // -1 = no task selected
     private int scrollOffset = 0;
 
+    /**
+     * Single-order entry point used by {@link com.homeftw.ae2intelligentscheduling.ClientProxy}
+     * when the GUI first opens. Adds the packet to the orders map AND switches the current tab
+     * to it so the player sees their own order immediately. The follow-up
+     * {@link #applyOrderList(SyncSmartCraftOrderListPacket)} call from the next refresh tick
+     * will populate the rest of the tab bar with other players' orders.
+     */
     public void update(SyncSmartCraftOrderPacket packet) {
-        this.data = packet;
+        if (packet == null) return;
+        this.orders.put(packet.getOrderId(), packet);
+        this.currentOrderId = packet.getOrderId();
         this.scrollOffset = 0;
+    }
+
+    /**
+     * v0.1.7 reconcile entry point: replaces the orders map with the server's authoritative list
+     * so terminal-but-removed orders disappear and new orders show up. Preserves the current
+     * scroll / selectedTaskIndex / cpuDetail when the focused order is still present, otherwise
+     * picks a sensible fallback tab.
+     */
+    public void applyOrderList(SyncSmartCraftOrderListPacket packet) {
+        if (packet == null) return;
+        this.orders.clear();
+        for (SyncSmartCraftOrderPacket entry : packet.getOrders()) {
+            this.orders.put(entry.getOrderId(), entry);
+        }
+        // If the currentOrderId is gone, fall back to a non-terminal order owned by THIS client
+        // (the client's own orders are the most likely thing the player wants to focus next), and
+        // failing that, the most recently-inserted order in the list.
+        if (this.currentOrderId == null || !this.orders.containsKey(this.currentOrderId)) {
+            this.currentOrderId = pickFallbackOrderId();
+            // Reset per-order view state because the new tab almost certainly has a different
+            // task layout. Without this the scroll offset / selected task index would silently
+            // point into the wrong order.
+            this.scrollOffset = 0;
+            this.selectedTaskIndex = -1;
+            this.selectedCpuName = null;
+            this.cpuDetail = null;
+        }
+    }
+
+    /**
+     * Switch focus to a different order. Resets per-order state (scroll / task selection / cpu
+     * detail) because they are meaningless after a tab change. No-op when the requested ID is not
+     * (yet) in the orders map — the next list-sync should populate it.
+     */
+    public void selectOrder(String orderId) {
+        if (orderId == null || !this.orders.containsKey(orderId)) return;
+        if (orderId.equals(this.currentOrderId)) return;
+        this.currentOrderId = orderId;
+        this.scrollOffset = 0;
+        this.selectedTaskIndex = -1;
+        this.selectedCpuName = null;
+        this.cpuDetail = null;
+    }
+
+    /**
+     * Currently focused order packet, or null when no tab is selected (empty manager). Internal
+     * paths use this instead of the old {@code this.data} field.
+     */
+    private SyncSmartCraftOrderPacket currentOrder() {
+        return this.currentOrderId == null ? null : this.orders.get(this.currentOrderId);
+    }
+
+    /**
+     * UUID of the currently focused order as a string, or null when no tab is selected. Used by
+     * {@link com.homeftw.ae2intelligentscheduling.client.gui.SmartCraftOrderTabsWidget} to render
+     * the active-tab highlight.
+     */
+    public String currentOrderId() {
+        return this.currentOrderId;
+    }
+
+    /**
+     * Insertion-order list of every active order's packet, used by the tab widget to render one
+     * tab per entry. Returns an unmodifiable view.
+     */
+    public List<SyncSmartCraftOrderPacket> tabOrders() {
+        return Collections.unmodifiableList(new ArrayList<SyncSmartCraftOrderPacket>(this.orders.values()));
+    }
+
+    /**
+     * Pick a fallback tab when the current one disappears. Heuristic: prefer the most recently
+     * added order owned by this client (last entry in the LinkedHashMap whose ownerName matches
+     * the local player), otherwise the most recently added order overall. Both fall back to null
+     * when the manager is empty.
+     */
+    private String pickFallbackOrderId() {
+        String localPlayerName = localPlayerName();
+        String mostRecentOwn = null;
+        String mostRecentAny = null;
+        for (Map.Entry<String, SyncSmartCraftOrderPacket> e : this.orders.entrySet()) {
+            mostRecentAny = e.getKey();
+            if (localPlayerName != null && localPlayerName.equals(
+                e.getValue()
+                    .getOwnerName())) {
+                mostRecentOwn = e.getKey();
+            }
+        }
+        return mostRecentOwn != null ? mostRecentOwn : mostRecentAny;
+    }
+
+    private static String localPlayerName() {
+        Minecraft mc = Minecraft.getMinecraft();
+        if (mc == null || mc.thePlayer == null) return null;
+        return mc.thePlayer.getCommandSenderName();
     }
 
     public void updateCpuDetail(SyncCpuDetailPacket packet) {
@@ -82,8 +205,9 @@ public final class SmartCraftOverlayRenderer {
      * still surfaces status / layer / split / blocking reason for the queued task.
      */
     public void selectTask(int taskIndex) {
-        if (this.data == null) return;
-        List<TaskView> tasks = this.data.getTasks();
+        SyncSmartCraftOrderPacket cur = currentOrder();
+        if (cur == null) return;
+        List<TaskView> tasks = cur.getTasks();
         if (taskIndex < 0 || taskIndex >= tasks.size()) return;
 
         this.selectedTaskIndex = taskIndex;
@@ -98,7 +222,8 @@ public final class SmartCraftOverlayRenderer {
     }
 
     public void clear() {
-        this.data = null;
+        this.orders.clear();
+        this.currentOrderId = null;
         this.cpuDetail = null;
         this.selectedCpuName = null;
         this.selectedTaskIndex = -1;
@@ -106,11 +231,12 @@ public final class SmartCraftOverlayRenderer {
     }
 
     public boolean hasData() {
-        return this.data != null;
+        return currentOrder() != null;
     }
 
     public String orderId() {
-        return this.data == null ? null : this.data.getOrderId();
+        SyncSmartCraftOrderPacket cur = currentOrder();
+        return cur == null ? null : cur.getOrderId();
     }
 
     public boolean isOverviewMode() {
@@ -118,7 +244,7 @@ public final class SmartCraftOverlayRenderer {
     }
 
     public void draw(int guiLeft, int guiTop, int xSize, int ySize, int mouseX, int mouseY) {
-        if (this.data == null) return;
+        if (currentOrder() == null) return;
         FontRenderer fr = Minecraft.getMinecraft().fontRenderer;
 
         int panelY = guiTop + SmartCraftStatusLayout.INFO_BAR_TOP;
@@ -149,7 +275,15 @@ public final class SmartCraftOverlayRenderer {
      * </ul>
      */
     private void drawTaskGrid(FontRenderer fr, int guiLeft, int guiTop, int mouseX, int mouseY) {
-        List<TaskView> tasks = this.data.getTasks();
+        SyncSmartCraftOrderPacket cur = currentOrder();
+        if (cur == null) return;
+        // (v0.1.8.2) Filter DONE tasks out of the top-grid view to mirror AE2 vanilla
+        // GuiCraftingCPU behaviour: once a sub-craft completes its tile vanishes from the active
+        // grid (AE2 routes the result into the network and the cell is recycled). Keeping DONE
+        // tasks here would clutter the player's mental model of "what is the cluster still
+        // working on". The schedule list on the bottom-left panel still shows DONE tasks so the
+        // player can review what has been finished.
+        List<TaskView> tasks = activeGridTasks(cur);
         if (tasks.isEmpty()) return;
 
         List<String> hoverTooltip = null;
@@ -325,7 +459,9 @@ public final class SmartCraftOverlayRenderer {
      * gets actionable feedback when clicking a layer button.
      */
     private void drawTaskDetailGrid(FontRenderer fr, int guiLeft, int guiTop) {
-        List<TaskView> tasks = this.data.getTasks();
+        SyncSmartCraftOrderPacket cur = currentOrder();
+        if (cur == null) return;
+        List<TaskView> tasks = cur.getTasks();
         if (tasks.isEmpty() || this.selectedTaskIndex < 0 || this.selectedTaskIndex >= tasks.size()) {
             return;
         }
@@ -373,6 +509,19 @@ public final class SmartCraftOverlayRenderer {
         fr.drawString(tr("amount") + ": " + compact(task.amount()), cellX + 4, cellY + 44, 0xCCCCCC);
 
         int infoY = cellY + 58;
+        // (v0.1.8.4 G11) Surface failure history before CPU / blocking-reason so the player sees
+        // "this task has failed N times so far" front-and-center on the detail panel. Only drawn
+        // when failureCount > 0 to avoid noise on healthy tasks. Red so it stands out from the
+        // blue cpu line and orange blocking-reason line.
+        if (task.failureCount() > 0) {
+            fr.drawString(
+                tr("failedBefore") + "  " + tr("failureCount") + ": " + task.failureCount(),
+                cellX + 4,
+                infoY,
+                GuiColors.CellStatusRed.getColor());
+            infoY += 12;
+        }
+
         String cpuName = task.assignedCpuName();
         if (cpuName != null && !cpuName.isEmpty()) {
             fr.drawString(tr("cpu") + ": " + cpuName, cellX + 4, infoY, GuiColors.CellStatusBlue.getColor());
@@ -396,27 +545,79 @@ public final class SmartCraftOverlayRenderer {
     // --- Info bar ---
 
     private void drawInfoBar(FontRenderer fr, int guiLeft, int panelY, int xSize) {
-        String status = this.data.getStatus();
+        SyncSmartCraftOrderPacket cur = currentOrder();
+        if (cur == null) return;
+        String status = cur.getStatus();
         SmartCraftStatus parsed = parseStatus(status);
 
         String left = tr("scale") + ": "
-            + this.data.getOrderScale()
+            + cur.getOrderScale()
             + "  "
             + tr("currentLayer")
             + ": "
-            + (this.data.getTotalLayers() <= 0 ? "-"
-                : (this.data.getCurrentLayer() + 1) + "/" + this.data.getTotalLayers());
+            + (cur.getTotalLayers() <= 0 ? "-" : (cur.getCurrentLayer() + 1) + "/" + cur.getTotalLayers());
         fr.drawString(left, guiLeft + 8, panelY, GuiColors.DefaultBlack.getColor());
         fr.drawString(tr("status") + ": " + status, guiLeft + 8, panelY + LINE_HEIGHT, statusColor(parsed));
 
         String right = tr("taskCount") + ": "
-            + this.data.getTasks()
+            + cur.getTasks()
                 .size()
             + "  "
             + tr("amount")
             + ": "
-            + compact(this.data.getTargetAmount());
+            + compact(cur.getTargetAmount());
         fr.drawString(right, guiLeft + xSize - 8 - fr.getStringWidth(right), panelY, GuiColors.DefaultBlack.getColor());
+
+        // (v0.1.8.3 G10) Scheduling stats: per-status counters appended to the right of the
+        // status line. Bucketing follows the same logical grouping as the cell-bg / status-dot
+        // helpers so a player can correlate the row colors with the numeric stats:
+        //   - Crafting (blue): RUNNING / SUBMITTING / VERIFYING_OUTPUT
+        //   - Done (green):    DONE (task-level terminal success)
+        //   - Pending (gray):  PENDING / QUEUED / WAITING_CPU / PAUSED
+        //   - Failed (red):    FAILED
+        //   CANCELLED is intentionally excluded \u2014 it represents player-initiated removal, not a
+        //   scheduling outcome to be tallied here. COMPLETED is order-level, not task-level, so
+        //   it can never appear on a TaskView and is also skipped.
+        int crafting = 0, completed = 0, pending = 0, failed = 0;
+        for (TaskView t : cur.getTasks()) {
+            SmartCraftStatus s = t.status();
+            if (s == null) continue;
+            switch (s) {
+                case RUNNING:
+                case SUBMITTING:
+                case VERIFYING_OUTPUT:
+                    crafting++;
+                    break;
+                case DONE:
+                    completed++;
+                    break;
+                case PENDING:
+                case QUEUED:
+                case WAITING_CPU:
+                case PAUSED:
+                    pending++;
+                    break;
+                case FAILED:
+                    failed++;
+                    break;
+                case CANCELLED:
+                case COMPLETED:
+                case ANALYZING:
+                default:
+                    // Don't bucket player-cancelled tasks or transient analysis states; they
+                    // would skew the "what is the cluster doing" mental model the stats serve.
+                    break;
+            }
+        }
+        // \u00a7-color codes match cellBg() / statusDotColor() so the colors read consistently with
+        // the grid tiles. \u00a7-codes are stripped by FontRenderer#getStringWidth so width math is
+        // accurate without manual sanitisation.
+        String stats = EnumChatFormatting.AQUA + tr("statsCrafting") + ":" + crafting
+            + "  " + EnumChatFormatting.GREEN + tr("statsCompleted") + ":" + completed
+            + "  " + EnumChatFormatting.GRAY + tr("statsPending") + ":" + pending
+            + "  " + EnumChatFormatting.RED + tr("statsFailed") + ":" + failed;
+        int statsW = fr.getStringWidth(stats);
+        fr.drawString(stats, guiLeft + xSize - 8 - statsW, panelY + LINE_HEIGHT, GuiColors.DefaultBlack.getColor());
 
         if (this.selectedCpuName != null) {
             String viewing = tr("viewing") + ": " + this.selectedCpuName;
@@ -431,30 +632,12 @@ public final class SmartCraftOverlayRenderer {
         return guiTop + ySize + 4;
     }
 
-    /** Draw schedule list labels (buttons are injected separately). */
-    public void drawScheduleList(FontRenderer fr, int guiLeft, int guiTop, int ySize) {
-        if (this.data == null) return;
-        List<TaskView> tasks = this.data.getTasks();
-        if (tasks.isEmpty()) return;
-
-        int listY = scheduleListY(guiTop, ySize);
-        int lastDepth = -1;
-
-        // Header label
-        fr.drawString(tr("schedule") + ":", guiLeft + 8, listY - 10, GuiColors.DefaultBlack.getColor());
-
-        int rowY = listY + LIST_ROW_HEIGHT; // first row after "Overview" button
-        for (TaskView task : tasks) {
-            if (task.depth() != lastDepth) {
-                lastDepth = task.depth();
-                fr.drawString(
-                    tr("currentLayer") + " " + task.depth() + ":",
-                    guiLeft + 8,
-                    rowY + 1,
-                    GuiColors.DefaultBlack.getColor());
-            }
-            rowY += LIST_ROW_HEIGHT;
-        }
+    /**
+     * Returns the currently selected task index, or {@code -1} if no task is selected.
+     * Used by {@link SmartCraftScheduleListWidget} to highlight the matching row.
+     */
+    public int getSelectedTaskIndex() {
+        return this.selectedTaskIndex;
     }
 
     // --- Tooltip helpers ---
@@ -519,6 +702,17 @@ public final class SmartCraftOverlayRenderer {
             lines.add(EnumChatFormatting.GRAY + tr("cpu") + ": " + EnumChatFormatting.AQUA + cpuName);
         }
 
+        // (v0.1.8.4 G11) Tooltip variant of the failure-history line. Mirrors the inline detail
+        // panel rendering so hovering a row in the schedule list / grid shows the same info
+        // without the player having to click into detail mode.
+        if (task.failureCount() > 0) {
+            lines.add(
+                EnumChatFormatting.GRAY + tr("failureCount")
+                    + ": "
+                    + EnumChatFormatting.RED
+                    + task.failureCount());
+        }
+
         String blocking = task.blockingReason();
         if (blocking != null && !blocking.isEmpty()) {
             lines.add(EnumChatFormatting.GRAY + tr("blockingReason") + ": " + EnumChatFormatting.GOLD + blocking);
@@ -544,8 +738,9 @@ public final class SmartCraftOverlayRenderer {
      * meta + NBT to align with AE2's own {@code IAEItemStack.equals}.
      */
     public TaskView findMatchingTask(ItemStack stack) {
-        if (stack == null || this.data == null) return null;
-        for (TaskView task : this.data.getTasks()) {
+        SyncSmartCraftOrderPacket cur = currentOrder();
+        if (stack == null || cur == null) return null;
+        for (TaskView task : cur.getTasks()) {
             ItemStack candidate = task.itemStack();
             if (candidate == null) continue;
             if (stacksMatch(candidate, stack)) {
@@ -616,9 +811,12 @@ public final class SmartCraftOverlayRenderer {
     // --- Actions ---
 
     public void scroll(int delta) {
-        if (this.data == null) return;
-        int taskCount = this.data.getTasks()
-            .size();
+        SyncSmartCraftOrderPacket cur = currentOrder();
+        if (cur == null) return;
+        // (v0.1.8.2) Grid scroll bounds derive from the FILTERED grid task list (DONE-excluded)
+        // because the grid only renders those rows. Using full task count here would let the
+        // player scroll past the end into empty rows.
+        int taskCount = activeGridTasks(cur).size();
         this.scrollOffset = SmartCraftStatusLayout.clampGridScroll(this.scrollOffset + delta, taskCount);
     }
 
@@ -628,36 +826,103 @@ public final class SmartCraftOverlayRenderer {
     }
 
     /** Set the top-grid scroll offset (in rows), clamped to the valid range. */
-    public void setGridScroll(int scroll) {
-        if (this.data == null) {
+    public int setGridScroll(int scroll) {
+        SyncSmartCraftOrderPacket cur = currentOrder();
+        if (cur == null) {
             this.scrollOffset = 0;
-            return;
+            return 0;
         }
+        // (v0.1.8.2) Same DONE-filtering rationale as #scroll: the grid only knows about the
+        // visible (non-DONE) rows, so the scrollbar drag math must clamp against that count.
         this.scrollOffset = SmartCraftStatusLayout.clampGridScroll(
             scroll,
-            this.data.getTasks()
-                .size());
+            activeGridTasks(cur).size());
+        return this.scrollOffset;
     }
 
     public void sendCancel() {
-        if (this.data == null) return;
+        SyncSmartCraftOrderPacket cur = currentOrder();
+        if (cur == null) return;
         NetworkHandler.INSTANCE.sendToServer(
-            new RequestSmartCraftActionPacket(
-                this.data.getOrderId(),
-                RequestSmartCraftActionPacket.Action.CANCEL_ORDER));
+            new RequestSmartCraftActionPacket(cur.getOrderId(), RequestSmartCraftActionPacket.Action.CANCEL_ORDER));
     }
 
+    /**
+     * Soft-cancel the current order: lets RUNNING crafts finish so the AE2 storage clusters'
+     * intermediate materials aren't orphaned, while preventing any new crafts from starting.
+     * Triggered by Shift+clicking the cancel button (Enhancement-F).
+     */
+    public void sendSoftCancel() {
+        SyncSmartCraftOrderPacket cur = currentOrder();
+        if (cur == null) return;
+        NetworkHandler.INSTANCE.sendToServer(
+            new RequestSmartCraftActionPacket(
+                cur.getOrderId(),
+                RequestSmartCraftActionPacket.Action.CANCEL_ORDER_SOFT));
+    }
+
+    /**
+     * Used by GuiSmartCraftStatus.updateScreen as the 1-second refresh heartbeat. v0.1.7 ignores
+     * the focused-order check on purpose: even when no tab is focused (empty manager) we still
+     * want to ask the server for the latest list, otherwise a player who entered with no orders
+     * would never see new tabs appear. Routes through the catch-all RequestOrderStatusPacket
+     * which the server now answers with the full list packet.
+     */
     public void sendRefresh() {
-        if (this.data == null) return;
-        NetworkHandler.INSTANCE.sendToServer(
-            new RequestSmartCraftActionPacket(
-                this.data.getOrderId(),
-                RequestSmartCraftActionPacket.Action.REFRESH_ORDER));
+        NetworkHandler.INSTANCE
+            .sendToServer(new com.homeftw.ae2intelligentscheduling.network.packet.RequestOrderStatusPacket());
     }
 
-    /** Returns all tasks for schedule list button generation. */
+    /**
+     * Resurrect every FAILED / CANCELLED task back to PENDING and bump the order to QUEUED so the
+     * scheduler picks the order up on the next tick. The server-side handler is the single
+     * authority on which task statuses count as retriable; this client method is just the trigger.
+     */
+    public void sendRetry() {
+        SyncSmartCraftOrderPacket cur = currentOrder();
+        if (cur == null) return;
+        NetworkHandler.INSTANCE.sendToServer(
+            new RequestSmartCraftActionPacket(cur.getOrderId(), RequestSmartCraftActionPacket.Action.RETRY_FAILED));
+    }
+
+    /** Returns all tasks for the schedule list, scoped to the focused order. */
     public List<TaskView> getTasks() {
-        return this.data == null ? new ArrayList<TaskView>() : this.data.getTasks();
+        SyncSmartCraftOrderPacket cur = currentOrder();
+        return cur == null ? new ArrayList<TaskView>() : cur.getTasks();
+    }
+
+    /**
+     * (v0.1.8.2) Returns the count of tasks currently visible in the top-grid view (i.e. all
+     * tasks except those in {@link SmartCraftStatus#DONE}). The schedule scrollbar / hit-test
+     * helpers in {@code GuiSmartCraftStatus} use this so dragging never overshoots into empty
+     * rows after some tasks have completed.
+     */
+    public int getGridTaskCount() {
+        SyncSmartCraftOrderPacket cur = currentOrder();
+        if (cur == null) return 0;
+        int n = 0;
+        for (TaskView t : cur.getTasks()) {
+            if (t.status() != SmartCraftStatus.DONE) n++;
+        }
+        return n;
+    }
+
+    /**
+     * (v0.1.8.2) Internal helper for grid rendering / scroll math. Builds a fresh list each call
+     * because task completion happens on the server and we don't have a structural change
+     * notification (we'd have to compare across packet refreshes). With typical task counts
+     * (< 100) and 60 fps × maybe 3 calls per frame this is well under a microsecond per call —
+     * not worth caching given how rarely the result is structurally needed.
+     */
+    private static List<TaskView> activeGridTasks(SyncSmartCraftOrderPacket cur) {
+        List<TaskView> all = cur.getTasks();
+        List<TaskView> out = new ArrayList<TaskView>(all.size());
+        for (TaskView t : all) {
+            if (t.status() != SmartCraftStatus.DONE) {
+                out.add(t);
+            }
+        }
+        return out;
     }
 
     /**
@@ -666,8 +931,9 @@ public final class SmartCraftOverlayRenderer {
      * Used by the GUI to grey out the button when no retriable tasks exist.
      */
     public boolean hasRetriableTasks() {
-        if (this.data == null) return false;
-        for (TaskView task : this.data.getTasks()) {
+        SyncSmartCraftOrderPacket cur = currentOrder();
+        if (cur == null) return false;
+        for (TaskView task : cur.getTasks()) {
             SmartCraftStatus s = task.status();
             if (s == SmartCraftStatus.FAILED || s == SmartCraftStatus.CANCELLED) {
                 return true;
@@ -682,8 +948,9 @@ public final class SmartCraftOverlayRenderer {
      * no-op so we grey it out.
      */
     public boolean isOrderActive() {
-        if (this.data == null) return false;
-        for (TaskView task : this.data.getTasks()) {
+        SyncSmartCraftOrderPacket cur = currentOrder();
+        if (cur == null) return false;
+        for (TaskView task : cur.getTasks()) {
             SmartCraftStatus s = task.status();
             if (s != null && !s.isTerminalTaskState()) {
                 return true;

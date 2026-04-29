@@ -23,12 +23,29 @@ public final class SmartCraftStatusLayout {
     public static final int OUTER_MARGIN = 16;
     public static final int MIN_VISIBLE_SCHEDULE_ROWS = 2;
 
+    /**
+     * v0.1.7 tab strip height. The strip is rendered above the GUI body (acts like a vertical
+     * 'ear' similar to vanilla creative tab pages) so the existing INFO_BAR_TOP /
+     * SCHEDULE_TITLE_TOP coordinates don't need to shift. Pairs with
+     * {@link SmartCraftOrderTabsWidget#STRIP_HEIGHT} so changing one updates the other.
+     */
+    public static final int TABS_AREA_HEIGHT = SmartCraftOrderTabsWidget.STRIP_HEIGHT;
+    /** Gap between the tab strip and the top edge of the GUI body. */
+    public static final int TABS_TOP_GAP = 2;
+    /**
+     * Total vertical space the tab strip claims above the GUI body, factored into the minimum
+     * top margin. Keeps the strip from being clipped on screens just tall enough for the body.
+     */
+    public static final int TABS_TOTAL_RESERVED = TABS_AREA_HEIGHT + TABS_TOP_GAP;
+
     private SmartCraftStatusLayout() {}
 
     public static int visibleScheduleRows(int screenHeight, int taskCount) {
         int totalRows = totalScheduleRows(taskCount);
-        int availableRows = (screenHeight - OUTER_MARGIN * 2 - SCHEDULE_BUTTON_TOP - ACTION_AREA_HEIGHT)
-            / SmartCraftOverlayRenderer.LIST_ROW_HEIGHT;
+        int availableRows = (screenHeight - OUTER_MARGIN * 2
+            - TABS_TOTAL_RESERVED
+            - SCHEDULE_BUTTON_TOP
+            - ACTION_AREA_HEIGHT) / SmartCraftOverlayRenderer.LIST_ROW_HEIGHT;
         // Cap to MAX_VISIBLE_TASK_ROWS + 1 (the +1 is the 总调度 overview row) so the schedule list never
         // gets larger than the design budget, even on very tall screens.
         int hardCap = MAX_VISIBLE_TASK_ROWS + 1;

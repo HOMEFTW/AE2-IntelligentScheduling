@@ -90,8 +90,12 @@ public final class OpenSmartCraftPreviewPacket implements IMessage {
                 return null;
             }
 
+            // (v0.1.9 G12) Pass the player username so the order survives a server restart and
+            // can rebind to the same player's session via SmartCraftOrderManager.resetForRestart.
             SmartCraftOrder order = new SmartCraftOrderBuilder()
-                .build(new Ae2CraftingJobSnapshotFactory().fromRequest(craftingJobV2.originalRequest));
+                .build(
+                    new Ae2CraftingJobSnapshotFactory().fromRequest(craftingJobV2.originalRequest),
+                    player.getCommandSenderName());
 
             if (order.layers()
                 .isEmpty()) {

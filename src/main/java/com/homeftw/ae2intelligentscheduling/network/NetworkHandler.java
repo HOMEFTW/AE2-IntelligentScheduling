@@ -6,6 +6,7 @@ import com.homeftw.ae2intelligentscheduling.network.packet.RequestCpuDetailPacke
 import com.homeftw.ae2intelligentscheduling.network.packet.RequestOrderStatusPacket;
 import com.homeftw.ae2intelligentscheduling.network.packet.RequestSmartCraftActionPacket;
 import com.homeftw.ae2intelligentscheduling.network.packet.SyncCpuDetailPacket;
+import com.homeftw.ae2intelligentscheduling.network.packet.SyncSmartCraftOrderListPacket;
 import com.homeftw.ae2intelligentscheduling.network.packet.SyncSmartCraftOrderPacket;
 
 import cpw.mods.fml.common.network.NetworkRegistry;
@@ -55,6 +56,11 @@ public final class NetworkHandler {
         INSTANCE.registerMessage(
             SyncCpuDetailPacket.Handler.class,
             SyncCpuDetailPacket.class,
+            nextMessageId++,
+            Side.CLIENT);
+        INSTANCE.registerMessage(
+            SyncSmartCraftOrderListPacket.Handler.class,
+            SyncSmartCraftOrderListPacket.class,
             nextMessageId++,
             Side.CLIENT);
 

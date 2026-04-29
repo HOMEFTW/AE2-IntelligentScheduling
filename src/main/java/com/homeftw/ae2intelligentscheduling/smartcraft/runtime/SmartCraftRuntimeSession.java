@@ -26,18 +26,39 @@ public final class SmartCraftRuntimeSession {
         private final ICraftingJob plannedJob;
         private final ICraftingLink craftingLink;
         private final String assignedCpuName;
+        /**
+         * Server-tick timestamp captured when {@link #planning} was called. Used by the runtime
+         * coordinator to detect AE2 planner hangs: if the planning future stays unresolved beyond
+         * the configured timeout we forcibly cancel it and surface FAILED instead of leaving the
+         * task wedged in SUBMITTING forever (e.g. when AE2 hits an internal deadlock or when the
+         * grid topology changed under planning's feet).
+         */
+        private final long submittedAtTick;
+        /**
+         * Tick at which this task first entered WAITING_CPU after its planning completed. Drives the
+         * anti-starvation tiebreaker in the dispatch sort: among tasks of equal critical-path
+         * priority, the one that has been waiting longest gets a CPU first. {@code -1} means the
+         * task has not yet been observed in WAITING_CPU on this execution; once stamped it is never
+         * re-stamped (so a task that gets a CPU, finishes, and re-enters via retry would create a
+         * fresh execution with its own counter).
+         */
+        private final long waitingCpuSinceTick;
 
         private TaskExecution(String taskId, java.util.concurrent.Future<ICraftingJob> planningFuture,
-            ICraftingJob plannedJob, ICraftingLink craftingLink, String assignedCpuName) {
+            ICraftingJob plannedJob, ICraftingLink craftingLink, String assignedCpuName, long submittedAtTick,
+            long waitingCpuSinceTick) {
             this.taskId = taskId;
             this.planningFuture = planningFuture;
             this.plannedJob = plannedJob;
             this.craftingLink = craftingLink;
             this.assignedCpuName = assignedCpuName;
+            this.submittedAtTick = submittedAtTick;
+            this.waitingCpuSinceTick = waitingCpuSinceTick;
         }
 
-        public static TaskExecution planning(String taskId, java.util.concurrent.Future<ICraftingJob> planningFuture) {
-            return new TaskExecution(taskId, planningFuture, null, null, null);
+        public static TaskExecution planning(String taskId, java.util.concurrent.Future<ICraftingJob> planningFuture,
+            long submittedAtTick) {
+            return new TaskExecution(taskId, planningFuture, null, null, null, submittedAtTick, -1L);
         }
 
         public TaskExecution withPlannedJob(ICraftingJob nextJob) {
@@ -46,7 +67,9 @@ public final class SmartCraftRuntimeSession {
                 this.planningFuture,
                 nextJob,
                 this.craftingLink,
-                this.assignedCpuName);
+                this.assignedCpuName,
+                this.submittedAtTick,
+                this.waitingCpuSinceTick);
         }
 
         public TaskExecution withAssignedCpuName(String nextAssignedCpuName) {
@@ -55,11 +78,38 @@ public final class SmartCraftRuntimeSession {
                 this.planningFuture,
                 this.plannedJob,
                 this.craftingLink,
-                nextAssignedCpuName);
+                nextAssignedCpuName,
+                this.submittedAtTick,
+                this.waitingCpuSinceTick);
         }
 
         public TaskExecution withCraftingLink(ICraftingLink nextLink) {
-            return new TaskExecution(this.taskId, this.planningFuture, this.plannedJob, nextLink, this.assignedCpuName);
+            return new TaskExecution(
+                this.taskId,
+                this.planningFuture,
+                this.plannedJob,
+                nextLink,
+                this.assignedCpuName,
+                this.submittedAtTick,
+                this.waitingCpuSinceTick);
+        }
+
+        /**
+         * Returns a copy with the WAITING_CPU entry-tick stamped. Idempotent — once set we keep the
+         * original tick because the whole point of the field is "how long has this been waiting".
+         */
+        public TaskExecution withWaitingCpuSinceTick(long tick) {
+            if (this.waitingCpuSinceTick >= 0L) {
+                return this;
+            }
+            return new TaskExecution(
+                this.taskId,
+                this.planningFuture,
+                this.plannedJob,
+                this.craftingLink,
+                this.assignedCpuName,
+                this.submittedAtTick,
+                tick);
         }
 
         public String taskId() {
@@ -70,8 +120,16 @@ public final class SmartCraftRuntimeSession {
             return this.planningFuture;
         }
 
+        public long submittedAtTick() {
+            return this.submittedAtTick;
+        }
+
         public ICraftingJob plannedJob() {
             return this.plannedJob;
+        }
+
+        public long waitingCpuSinceTick() {
+            return this.waitingCpuSinceTick;
         }
 
         public ICraftingLink craftingLink() {
@@ -109,6 +167,15 @@ public final class SmartCraftRuntimeSession {
         return this.owner;
     }
 
+    /**
+     * Display name suitable for embedding in client-side tooltips. Returns an empty string when
+     * the owner is null (defensive — production paths always set it but tests construct sessions
+     * with mocked owners).
+     */
+    public String ownerName() {
+        return this.owner == null ? "" : this.owner.getCommandSenderName();
+    }
+
     public World world() {
         return this.world;
     }
@@ -137,11 +204,13 @@ public final class SmartCraftRuntimeSession {
         return task == null ? null : this.executionsByTaskId.get(task.taskKey());
     }
 
-    public void trackPlanning(SmartCraftTask task, java.util.concurrent.Future<ICraftingJob> planningFuture) {
+    public void trackPlanning(SmartCraftTask task, java.util.concurrent.Future<ICraftingJob> planningFuture,
+        long submittedAtTick) {
         if (task == null || planningFuture == null) {
             return;
         }
-        this.executionsByTaskId.put(task.taskKey(), TaskExecution.planning(task.taskKey(), planningFuture));
+        this.executionsByTaskId
+            .put(task.taskKey(), TaskExecution.planning(task.taskKey(), planningFuture, submittedAtTick));
     }
 
     public void attachPlannedJob(SmartCraftTask task, ICraftingJob plannedJob) {
@@ -150,6 +219,22 @@ public final class SmartCraftRuntimeSession {
             return;
         }
         this.executionsByTaskId.put(task.taskKey(), existing.withPlannedJob(plannedJob));
+    }
+
+    /**
+     * Stamp the tick at which this task entered WAITING_CPU for the first time on this execution.
+     * Drives anti-starvation in dispatch: tasks that have been waiting longer get scheduled first
+     * when CPUs free up. Idempotent: re-calling on an already-stamped execution is a no-op.
+     */
+    public void markWaitingCpu(SmartCraftTask task, long tick) {
+        TaskExecution existing = executionFor(task);
+        if (existing == null) {
+            return;
+        }
+        TaskExecution updated = existing.withWaitingCpuSinceTick(tick);
+        if (updated != existing) {
+            this.executionsByTaskId.put(task.taskKey(), updated);
+        }
     }
 
     public void attachCraftingLink(SmartCraftTask task, ICraftingLink craftingLink) {
@@ -168,6 +253,20 @@ public final class SmartCraftRuntimeSession {
         this.executionsByTaskId.put(task.taskKey(), existing.withAssignedCpuName(cpu.getName()));
     }
 
+    /**
+     * v0.1.8 (G5): drop the assigned-CPU pin without touching the cached plan or planning future.
+     * Used by submit-failure backoff: AE2 rejected our submission so the chosen CPU is no longer
+     * reserved, but the plannedJob is still valid (plan succeeded earlier; the failure happened
+     * at submitJob time, not during planning). Next dispatch can re-pick a fresh idle CPU.
+     */
+    public void detachAssignedCpu(SmartCraftTask task) {
+        TaskExecution existing = executionFor(task);
+        if (existing == null) {
+            return;
+        }
+        this.executionsByTaskId.put(task.taskKey(), existing.withAssignedCpuName(null));
+    }
+
     public void recordStockBaseline(SmartCraftTask task, long currentStock) {
         if (task == null) return;
         this.stockBaselineByTaskId.put(task.taskKey(), Long.valueOf(currentStock));
@@ -183,7 +282,20 @@ public final class SmartCraftRuntimeSession {
         if (task == null) {
             return;
         }
-        this.executionsByTaskId.remove(task.taskKey());
+        // FIX (P0-#1): cancel any still-running planning future before dropping the execution.
+        // Without this, an order cancelled while a task is mid-planning leaks an AE2 planner thread
+        // that may later try to write back into a session whose execution map has been cleared,
+        // producing ghost entries or NullPointerException. cancelAll() handles this for full session
+        // teardown but per-task transitions (terminal task in reconcileTaskExecution, submit-failed
+        // path in dispatchReadyTasks, etc.) used to leak the future. Future.cancel is idempotent so
+        // the always-already-done callers (link.isDone() / link.isCanceled()) cost nothing.
+        TaskExecution removed = this.executionsByTaskId.remove(task.taskKey());
+        if (removed != null && removed.planningFuture() != null
+            && !removed.planningFuture()
+                .isDone()) {
+            removed.planningFuture()
+                .cancel(true);
+        }
         this.stockBaselineByTaskId.remove(task.taskKey());
     }
 

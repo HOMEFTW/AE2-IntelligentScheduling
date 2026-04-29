@@ -34,10 +34,33 @@ public final class SyncSmartCraftOrderPacket implements IMessage {
         private final String executionState;
         private final String assignedCpuName;
         private final ItemStack itemStack;
+        /**
+         * v0.1.8.4 (G11) Sum of pending plan / submit / link-cancel retry attempts for this task.
+         * Surfaces in the detail panel as "failed N times" so the player can spot tasks that are
+         * currently struggling. 0 means the task is either healthy or has never attempted yet.
+         */
+        private final int failureCount;
 
         public TaskView(String requestKeyId, long amount, int depth, int splitIndex, int splitCount,
             SmartCraftStatus status, String blockingReason, String executionState, String assignedCpuName,
             ItemStack itemStack) {
+            this(
+                requestKeyId,
+                amount,
+                depth,
+                splitIndex,
+                splitCount,
+                status,
+                blockingReason,
+                executionState,
+                assignedCpuName,
+                itemStack,
+                0);
+        }
+
+        public TaskView(String requestKeyId, long amount, int depth, int splitIndex, int splitCount,
+            SmartCraftStatus status, String blockingReason, String executionState, String assignedCpuName,
+            ItemStack itemStack, int failureCount) {
             this.requestKeyId = requestKeyId;
             this.amount = amount;
             this.depth = depth;
@@ -48,6 +71,7 @@ public final class SyncSmartCraftOrderPacket implements IMessage {
             this.executionState = executionState;
             this.assignedCpuName = assignedCpuName;
             this.itemStack = itemStack;
+            this.failureCount = failureCount;
         }
 
         public String requestKeyId() {
@@ -89,30 +113,51 @@ public final class SyncSmartCraftOrderPacket implements IMessage {
         public ItemStack itemStack() {
             return this.itemStack;
         }
+
+        public int failureCount() {
+            return this.failureCount;
+        }
     }
 
     private String orderId;
     private String targetRequestKeyId;
+    /**
+     * v0.1.9.1: ItemStack of the order's final product (root request). Used as the multi-order
+     * tab icon so each tab shows what the player asked for (e.g. "Hull") rather than whatever
+     * task happens to be first in the layer list (which is a leaf raw material like Iron Ingot
+     * — visually misleading because every tab tends to show the same low-tier resource).
+     * Nullable when the request key has no item representation (fluids / virtual outputs).
+     */
+    private ItemStack targetItemStack;
     private long targetAmount;
     private String orderScale;
     private String status;
     private int currentLayer;
     private int totalLayers;
+    /**
+     * Owner's display name (player.getCommandSenderName()). Empty string when unknown / test
+     * sessions. Used by the multi-order tab UI to label tabs like '[Steve] hull ×100'.
+     */
+    private String ownerName;
     private List<TaskView> tasks;
 
     public SyncSmartCraftOrderPacket() {
+        this.ownerName = "";
         this.tasks = new ArrayList<TaskView>();
     }
 
-    private SyncSmartCraftOrderPacket(String orderId, String targetRequestKeyId, long targetAmount, String orderScale,
-        String status, int currentLayer, int totalLayers, List<TaskView> tasks) {
+    private SyncSmartCraftOrderPacket(String orderId, String targetRequestKeyId, ItemStack targetItemStack,
+        long targetAmount, String orderScale, String status, int currentLayer, int totalLayers, String ownerName,
+        List<TaskView> tasks) {
         this.orderId = orderId;
         this.targetRequestKeyId = targetRequestKeyId;
+        this.targetItemStack = targetItemStack;
         this.targetAmount = targetAmount;
         this.orderScale = orderScale;
         this.status = status;
         this.currentLayer = currentLayer;
         this.totalLayers = totalLayers;
+        this.ownerName = ownerName == null ? "" : ownerName;
         this.tasks = new ArrayList<TaskView>(tasks);
     }
 
@@ -125,6 +170,12 @@ public final class SyncSmartCraftOrderPacket implements IMessage {
         List<TaskView> views = new ArrayList<TaskView>();
         for (SmartCraftLayer layer : order.layers()) {
             for (SmartCraftTask task : layer.tasks()) {
+                // (v0.1.8.4 G11) Pull the per-task pending failure count from the live runtime
+                // coordinator. Static singleton lookup is acceptable because this packet is built
+                // exclusively on the server thread that owns the coordinator's tick state; on the
+                // client side this method is never called (TaskView is reconstructed via fromBytes).
+                int failureCount = AE2IntelligentScheduling.SMART_CRAFT_RUNTIME == null ? 0
+                    : AE2IntelligentScheduling.SMART_CRAFT_RUNTIME.totalFailuresFor(task.taskKey());
                 views.add(
                     new TaskView(
                         task.requestKey()
@@ -139,7 +190,8 @@ public final class SyncSmartCraftOrderPacket implements IMessage {
                         assignedCpuNameOf(session, task),
                         task.requestKey() == null ? null
                             : task.requestKey()
-                                .itemStack()));
+                                .itemStack(),
+                        failureCount));
             }
         }
 
@@ -147,6 +199,9 @@ public final class SyncSmartCraftOrderPacket implements IMessage {
             orderId.toString(),
             order.targetRequestKey()
                 .id(),
+            order.targetRequestKey() == null ? null
+                : order.targetRequestKey()
+                    .itemStack(),
             order.targetAmount(),
             order.orderScale()
                 .name(),
@@ -155,6 +210,7 @@ public final class SyncSmartCraftOrderPacket implements IMessage {
             order.currentLayerIndex(),
             order.layers()
                 .size(),
+            session == null ? "" : session.ownerName(),
             views);
     }
 
@@ -164,6 +220,14 @@ public final class SyncSmartCraftOrderPacket implements IMessage {
 
     public String getTargetRequestKeyId() {
         return this.targetRequestKeyId;
+    }
+
+    /**
+     * v0.1.9.1: ItemStack of the final product. May be {@code null} for fluid/virtual targets.
+     * Used by {@code SmartCraftOrderTabsWidget} to render the tab icon.
+     */
+    public ItemStack getTargetItemStack() {
+        return this.targetItemStack;
     }
 
     public long getTargetAmount() {
@@ -186,6 +250,10 @@ public final class SyncSmartCraftOrderPacket implements IMessage {
         return this.totalLayers;
     }
 
+    public String getOwnerName() {
+        return this.ownerName;
+    }
+
     public List<TaskView> getTasks() {
         return Collections.unmodifiableList(this.tasks);
     }
@@ -194,11 +262,16 @@ public final class SyncSmartCraftOrderPacket implements IMessage {
     public void fromBytes(ByteBuf buf) {
         this.orderId = ByteBufUtils.readUTF8String(buf);
         this.targetRequestKeyId = ByteBufUtils.readUTF8String(buf);
+        // v0.1.9.1: read targetItemStack just after the id so the wire layout mirrors how
+        // TaskView packs its own ItemStack (UTF8 id + ItemStack on the same record). Nullable
+        // ItemStacks survive the round-trip via ByteBufUtils' built-in null-marker handling.
+        this.targetItemStack = ByteBufUtils.readItemStack(buf);
         this.targetAmount = buf.readLong();
         this.orderScale = ByteBufUtils.readUTF8String(buf);
         this.status = ByteBufUtils.readUTF8String(buf);
         this.currentLayer = buf.readInt();
         this.totalLayers = buf.readInt();
+        this.ownerName = ByteBufUtils.readUTF8String(buf);
 
         int taskCount = buf.readInt();
         this.tasks = new ArrayList<TaskView>(taskCount);
@@ -214,7 +287,8 @@ public final class SyncSmartCraftOrderPacket implements IMessage {
                     ByteBufUtils.readUTF8String(buf),
                     ByteBufUtils.readUTF8String(buf),
                     ByteBufUtils.readUTF8String(buf),
-                    ByteBufUtils.readItemStack(buf)));
+                    ByteBufUtils.readItemStack(buf),
+                    buf.readInt()));
         }
     }
 
@@ -222,11 +296,13 @@ public final class SyncSmartCraftOrderPacket implements IMessage {
     public void toBytes(ByteBuf buf) {
         ByteBufUtils.writeUTF8String(buf, this.orderId);
         ByteBufUtils.writeUTF8String(buf, this.targetRequestKeyId);
+        ByteBufUtils.writeItemStack(buf, this.targetItemStack);
         buf.writeLong(this.targetAmount);
         ByteBufUtils.writeUTF8String(buf, this.orderScale);
         ByteBufUtils.writeUTF8String(buf, this.status);
         buf.writeInt(this.currentLayer);
         buf.writeInt(this.totalLayers);
+        ByteBufUtils.writeUTF8String(buf, this.ownerName == null ? "" : this.ownerName);
         buf.writeInt(this.tasks.size());
 
         for (TaskView task : this.tasks) {
@@ -243,6 +319,7 @@ public final class SyncSmartCraftOrderPacket implements IMessage {
             ByteBufUtils.writeUTF8String(buf, task.executionState());
             ByteBufUtils.writeUTF8String(buf, task.assignedCpuName());
             ByteBufUtils.writeItemStack(buf, task.itemStack());
+            buf.writeInt(task.failureCount());
         }
     }
 

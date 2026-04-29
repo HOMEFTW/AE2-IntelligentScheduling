@@ -1,6 +1,5 @@
 package com.homeftw.ae2intelligentscheduling.client.gui;
 
-import java.util.Iterator;
 import java.util.List;
 
 import net.minecraft.client.gui.GuiButton;
@@ -10,8 +9,6 @@ import net.minecraft.util.StatCollector;
 
 import org.lwjgl.input.Mouse;
 
-import com.homeftw.ae2intelligentscheduling.network.NetworkHandler;
-import com.homeftw.ae2intelligentscheduling.network.packet.RequestSmartCraftActionPacket;
 import com.homeftw.ae2intelligentscheduling.network.packet.SyncSmartCraftOrderPacket;
 import com.homeftw.ae2intelligentscheduling.network.packet.SyncSmartCraftOrderPacket.TaskView;
 
@@ -63,6 +60,12 @@ public final class GuiSmartCraftStatus extends GuiScreen {
     private final SyncSmartCraftOrderPacket packet;
     private int refreshTicks = 0;
     private int scheduleScroll = 0;
+    /**
+     * v0.1.7 tab strip horizontal scroll offset (in tabs, not pixels). Clamped every frame from
+     * {@link #drawScreen} so when the orders list shrinks the visible window stays inside bounds
+     * without an extra reconcile event.
+     */
+    private int tabScroll = 0;
     private DragMode dragMode = DragMode.NONE;
     private int dragOffsetWithinThumb = 0;
     // Cached button references so we can flip enabled state every frame based on current order data.
@@ -103,7 +106,8 @@ public final class GuiSmartCraftStatus extends GuiScreen {
         this.buttonList.add(this.cancelButton);
         this.buttonList.add(this.retryButton);
         this.refreshActionButtonStates();
-        this.syncScheduleButtons(guiLeft, guiTop, guiHeight);
+        // Schedule list rows are now painted by SmartCraftScheduleListWidget directly in
+        // drawScreen() and clicked through tryClickScheduleRow() — no GuiButton injection.
     }
 
     /**
@@ -145,7 +149,6 @@ public final class GuiSmartCraftStatus extends GuiScreen {
             mouseY);
         this.drawScheduleTitle(guiLeft, guiTop);
         this.refreshActionButtonStates();
-        this.syncScheduleButtons(guiLeft, guiTop, guiHeight);
 
         this.fontRendererObj.drawString(
             StatCollector.translateToLocal("gui.ae2intelligentscheduling.statusTitle"),
@@ -154,9 +157,104 @@ public final class GuiSmartCraftStatus extends GuiScreen {
             0x404040);
         super.drawScreen(mouseX, mouseY, partialTicks);
 
+        // Schedule list widget owns row-level rendering. Drawn AFTER super.drawScreen so it sits
+        // above the AE2 background but BELOW the scrollbars, matching the Z-order players expect.
+        this.drawScheduleListWidget(guiLeft, guiTop, mouseX, mouseY);
+
+        // v0.1.7 tab strip: rendered above the GUI body. Done after the body so the active-tab
+        // accent overlays the GUI's top border instead of the other way around.
+        this.drawTabStrip(guiLeft, mouseX, mouseY);
+
         // Draw scrollbars on top of buttons / overlay so they always remain visible.
         this.drawGridScrollbar(guiLeft, guiTop, mouseX, mouseY);
         this.drawScheduleScrollbar(guiLeft, guiTop, guiHeight, mouseX, mouseY);
+    }
+
+    /**
+     * Paint the multi-order tab strip and clamp the scroll offset before drawing. Stateless other
+     * than {@link #tabScroll}; the widget itself owns no state.
+     */
+    private void drawTabStrip(int guiLeft, int mouseX, int mouseY) {
+        List<SyncSmartCraftOrderPacket> tabs = SmartCraftConfirmGuiEventHandler.OVERLAY.tabOrders();
+        int total = tabs.size();
+        if (total == 0) return;
+        int visible = SmartCraftOrderTabsWidget.visibleTabCount(SmartCraftStatusLayout.GUI_WIDTH, total);
+        this.tabScroll = SmartCraftOrderTabsWidget.clampScroll(this.tabScroll, total, visible);
+        SmartCraftOrderTabsWidget.draw(
+            this.fontRendererObj,
+            guiLeft,
+            this.tabStripY(),
+            SmartCraftStatusLayout.GUI_WIDTH,
+            tabs,
+            SmartCraftConfirmGuiEventHandler.OVERLAY.currentOrderId(),
+            this.tabScroll,
+            mouseX,
+            mouseY);
+    }
+
+    /**
+     * Hit-test the tab strip. Returns true when the click was consumed (a tab was selected, an
+     * arrow was pressed, or the click landed inside the strip area but missed all hot zones — we
+     * still consume it to prevent leaking through to the GUI body underneath).
+     */
+    private boolean tryClickTabStrip(int mouseX, int mouseY) {
+        List<SyncSmartCraftOrderPacket> tabs = SmartCraftConfirmGuiEventHandler.OVERLAY.tabOrders();
+        if (tabs.isEmpty()) return false;
+        int stripY = this.tabStripY();
+        // Quick reject: cursor outside the strip's vertical band.
+        if (mouseY < stripY || mouseY >= stripY + SmartCraftOrderTabsWidget.STRIP_HEIGHT) return false;
+
+        String hit = SmartCraftOrderTabsWidget
+            .hitTest(mouseX, mouseY, this.guiLeft(), stripY, SmartCraftStatusLayout.GUI_WIDTH, tabs, this.tabScroll);
+        if (hit == null) {
+            // Click landed in strip band but on padding — consume to avoid leaking to the body.
+            return true;
+        }
+        if (SmartCraftOrderTabsWidget.SCROLL_LEFT.equals(hit)) {
+            int total = tabs.size();
+            int visible = SmartCraftOrderTabsWidget.visibleTabCount(SmartCraftStatusLayout.GUI_WIDTH, total);
+            this.tabScroll = SmartCraftOrderTabsWidget.clampScroll(this.tabScroll - 1, total, visible);
+            return true;
+        }
+        if (SmartCraftOrderTabsWidget.SCROLL_RIGHT.equals(hit)) {
+            int total = tabs.size();
+            int visible = SmartCraftOrderTabsWidget.visibleTabCount(SmartCraftStatusLayout.GUI_WIDTH, total);
+            this.tabScroll = SmartCraftOrderTabsWidget.clampScroll(this.tabScroll + 1, total, visible);
+            return true;
+        }
+        // Tab click: switch the OVERLAY's focused order. The very next refresh tick will fetch
+        // the latest data, but the tab data itself is already in the orders map so the body
+        // re-renders the new order instantly.
+        SmartCraftConfirmGuiEventHandler.OVERLAY.selectOrder(hit);
+        return true;
+    }
+
+    /**
+     * Paint the custom-rendered schedule list (overview row + task rows with item icons + status
+     * dots) at the schedule area. Replaces the previous "inject vanilla GuiButtons" approach.
+     */
+    private void drawScheduleListWidget(int guiLeft, int guiTop, int mouseX, int mouseY) {
+        List<TaskView> tasks = SmartCraftConfirmGuiEventHandler.OVERLAY.getTasks();
+        int visibleRows = SmartCraftStatusLayout.visibleScheduleRows(this.height, tasks.size());
+        this.scheduleScroll = SmartCraftStatusLayout
+            .clampScheduleScroll(this.scheduleScroll, tasks.size(), visibleRows);
+        int firstTask = SmartCraftStatusLayout.firstVisibleTask(this.scheduleScroll, tasks.size(), visibleRows);
+        int visibleTaskCount = SmartCraftStatusLayout.visibleTaskCount(firstTask, tasks.size(), visibleRows);
+        int listY = guiTop + SmartCraftStatusLayout.SCHEDULE_BUTTON_TOP;
+
+        SmartCraftScheduleListWidget.draw(
+            this.fontRendererObj,
+            guiLeft,
+            listY,
+            SmartCraftStatusLayout.GUI_WIDTH,
+            tasks,
+            firstTask,
+            visibleTaskCount,
+            SmartCraftConfirmGuiEventHandler.OVERLAY.getSelectedTaskIndex(),
+            SmartCraftConfirmGuiEventHandler.OVERLAY.isOverviewMode()
+                && SmartCraftConfirmGuiEventHandler.OVERLAY.getSelectedTaskIndex() < 0,
+            mouseX,
+            mouseY);
     }
 
     @Override
@@ -189,6 +287,28 @@ public final class GuiSmartCraftStatus extends GuiScreen {
     }
 
     @Override
+    protected void actionPerformed(GuiButton button) {
+        // Cancel / retry are vanilla GuiButtons we add in initGui; the schedule list rows are
+        // handled separately by tryClickScheduleRow. v0.1.4 deleted this method entirely while
+        // pruning the schedule-list vanilla-button branches and silently broke both cancel and
+        // retry until v0.1.6 re-added the dispatch.
+        // The enabled check guards against keyboard ENTER triggering the first focused button
+        // even when refreshActionButtonStates has greyed it out (e.g. order already terminal).
+        if (!button.enabled) return;
+        if (button.id == SmartCraftConfirmButtonLayout.CANCEL_BUTTON_ID) {
+            // Shift+click → soft cancel: spare RUNNING tasks so AE2's already-invested
+            // intermediate materials aren't orphaned. Plain click → hard cancel.
+            if (GuiScreen.isShiftKeyDown()) {
+                SmartCraftConfirmGuiEventHandler.OVERLAY.sendSoftCancel();
+            } else {
+                SmartCraftConfirmGuiEventHandler.OVERLAY.sendCancel();
+            }
+        } else if (button.id == SmartCraftConfirmButtonLayout.RETRY_BUTTON_ID) {
+            SmartCraftConfirmGuiEventHandler.OVERLAY.sendRetry();
+        }
+    }
+
+    @Override
     protected void mouseClicked(int mouseX, int mouseY, int mouseButton) {
         if (mouseButton == 0) {
             if (this.tryStartScrollbarDrag(mouseX, mouseY, true)) {
@@ -197,8 +317,51 @@ public final class GuiSmartCraftStatus extends GuiScreen {
             if (this.tryStartScrollbarDrag(mouseX, mouseY, false)) {
                 return;
             }
+            // v0.1.7 tab strip click: must come before the schedule list hit-test because the
+            // strip lives above the GUI body — its band can never overlap the body, but routing
+            // it first keeps the priority order explicit.
+            if (this.tryClickTabStrip(mouseX, mouseY)) {
+                return;
+            }
+            // Schedule list widget hit-test: a click on a row fires selectOverview() /
+            // selectTask(idx). Done before super.mouseClicked so a click that lands on a row
+            // doesn't also hit any vanilla button beneath the widget area (defense in depth —
+            // there shouldn't be one any more, but the early return keeps the contract clean).
+            if (this.tryClickScheduleRow(mouseX, mouseY)) {
+                return;
+            }
         }
         super.mouseClicked(mouseX, mouseY, mouseButton);
+    }
+
+    /**
+     * Map a mouse click to the schedule list widget. Returns true when the click landed on a row
+     * (and thus was consumed); false otherwise so the caller can keep dispatching the click.
+     */
+    private boolean tryClickScheduleRow(int mouseX, int mouseY) {
+        List<TaskView> tasks = SmartCraftConfirmGuiEventHandler.OVERLAY.getTasks();
+        int visibleRows = SmartCraftStatusLayout.visibleScheduleRows(this.height, tasks.size());
+        int firstTask = SmartCraftStatusLayout.firstVisibleTask(this.scheduleScroll, tasks.size(), visibleRows);
+        int visibleTaskCount = SmartCraftStatusLayout.visibleTaskCount(firstTask, tasks.size(), visibleRows);
+        int listY = this.guiTop() + SmartCraftStatusLayout.SCHEDULE_BUTTON_TOP;
+        int hit = SmartCraftScheduleListWidget.hitTest(
+            mouseX,
+            mouseY,
+            this.guiLeft(),
+            listY,
+            SmartCraftStatusLayout.GUI_WIDTH,
+            tasks.size(),
+            firstTask,
+            visibleTaskCount);
+        if (hit == SmartCraftScheduleListWidget.OVERVIEW_ROW) {
+            SmartCraftConfirmGuiEventHandler.OVERLAY.selectOverview();
+            return true;
+        }
+        if (hit >= 0) {
+            SmartCraftConfirmGuiEventHandler.OVERLAY.selectTask(hit);
+            return true;
+        }
+        return false;
     }
 
     @Override
@@ -223,35 +386,20 @@ public final class GuiSmartCraftStatus extends GuiScreen {
         super.mouseMovedOrUp(mouseX, mouseY, eventButton);
     }
 
-    @Override
-    protected void actionPerformed(GuiButton button) {
-        if (button.id == SmartCraftConfirmButtonLayout.CANCEL_BUTTON_ID) {
-            SmartCraftConfirmGuiEventHandler.OVERLAY.sendCancel();
-        } else if (button.id == SmartCraftConfirmButtonLayout.RETRY_BUTTON_ID
-            && SmartCraftConfirmGuiEventHandler.OVERLAY.hasData()) {
-                NetworkHandler.INSTANCE.sendToServer(
-                    new RequestSmartCraftActionPacket(
-                        SmartCraftConfirmGuiEventHandler.OVERLAY.orderId(),
-                        RequestSmartCraftActionPacket.Action.RETRY_FAILED));
-            } else if (button.id == SmartCraftConfirmButtonLayout.OVERVIEW_BUTTON_ID) {
-                SmartCraftConfirmGuiEventHandler.OVERLAY.selectOverview();
-            } else if (button.id >= SmartCraftConfirmButtonLayout.TASK_BUTTON_BASE) {
-                SmartCraftConfirmGuiEventHandler.OVERLAY
-                    .selectTask(button.id - SmartCraftConfirmButtonLayout.TASK_BUTTON_BASE);
-            }
-    }
-
-    @Override
-    public boolean doesGuiPauseGame() {
-        return false;
-    }
-
     private int guiLeft() {
         return (this.width - SmartCraftStatusLayout.GUI_WIDTH) / 2;
     }
 
     private int guiTop() {
-        return Math.max(SmartCraftStatusLayout.OUTER_MARGIN, (this.height - this.guiHeight()) / 2);
+        // v0.1.7: reserve the tab strip's height above the body so the 'ear' isn't clipped on
+        // small screens. Without this, on a 240-px window the centered top would be 16-ish and
+        // tabs at guiTop - 24 would draw off the top of the window.
+        int minTop = SmartCraftStatusLayout.OUTER_MARGIN + SmartCraftStatusLayout.TABS_TOTAL_RESERVED;
+        return Math.max(minTop, (this.height - this.guiHeight()) / 2);
+    }
+
+    private int tabStripY() {
+        return this.guiTop() - SmartCraftStatusLayout.TABS_TOTAL_RESERVED;
     }
 
     private int guiHeight() {
@@ -259,38 +407,6 @@ public final class GuiSmartCraftStatus extends GuiScreen {
             this.height,
             SmartCraftConfirmGuiEventHandler.OVERLAY.getTasks()
                 .size());
-    }
-
-    private void syncScheduleButtons(int guiLeft, int guiTop, int guiHeight) {
-        this.removeScheduleButtons();
-        List<TaskView> tasks = SmartCraftConfirmGuiEventHandler.OVERLAY.getTasks();
-        if (tasks.isEmpty()) {
-            return;
-        }
-
-        int visibleRows = SmartCraftStatusLayout.visibleScheduleRows(this.height, tasks.size());
-        this.scheduleScroll = SmartCraftStatusLayout
-            .clampScheduleScroll(this.scheduleScroll, tasks.size(), visibleRows);
-        int firstTask = SmartCraftStatusLayout.firstVisibleTask(this.scheduleScroll, tasks.size(), visibleRows);
-        int visibleTaskCount = SmartCraftStatusLayout.visibleTaskCount(firstTask, tasks.size(), visibleRows);
-        int listY = guiTop + SmartCraftStatusLayout.SCHEDULE_BUTTON_TOP;
-        for (SmartCraftScheduleButtonLayout.ButtonSpec spec : SmartCraftScheduleButtonLayout
-            .buttons(guiLeft, listY, tasks, firstTask, visibleTaskCount)) {
-            GuiButton button = new GuiButton(spec.id(), spec.x(), spec.y(), spec.width(), spec.height(), spec.label());
-            button.enabled = spec.enabled();
-            this.buttonList.add(button);
-        }
-    }
-
-    private void removeScheduleButtons() {
-        Iterator<GuiButton> it = this.buttonList.iterator();
-        while (it.hasNext()) {
-            int id = it.next().id;
-            if (id == SmartCraftConfirmButtonLayout.OVERVIEW_BUTTON_ID
-                || id >= SmartCraftConfirmButtonLayout.TASK_BUTTON_BASE) {
-                it.remove();
-            }
-        }
     }
 
     private void drawLongAe2Background(int guiLeft, int guiTop, int guiHeight) {
@@ -415,8 +531,8 @@ public final class GuiSmartCraftStatus extends GuiScreen {
     }
 
     private int gridScrollMax() {
-        int taskCount = SmartCraftConfirmGuiEventHandler.OVERLAY.getTasks()
-            .size();
+        // (v0.1.8.2) Grid view filters DONE tasks; max scroll must match the visible row count.
+        int taskCount = SmartCraftConfirmGuiEventHandler.OVERLAY.getGridTaskCount();
         return SmartCraftStatusLayout.maxGridScroll(taskCount);
     }
 
@@ -427,8 +543,10 @@ public final class GuiSmartCraftStatus extends GuiScreen {
     }
 
     private void drawGridScrollbar(int guiLeft, int guiTop, int mouseX, int mouseY) {
-        int taskCount = SmartCraftConfirmGuiEventHandler.OVERLAY.getTasks()
-            .size();
+        // (v0.1.8.2) Grid scrollbar tracks ONLY non-DONE tasks because the grid view filters
+        // them out. Using full getTasks().size() here would size the scrollbar thumb against the
+        // unfiltered list and let the player drag past the end into empty rows.
+        int taskCount = SmartCraftConfirmGuiEventHandler.OVERLAY.getGridTaskCount();
         int totalRows = SmartCraftStatusLayout.totalGridRows(taskCount);
         int visibleRows = SmartCraftStatusLayout.GRID_ROWS;
         int scroll = SmartCraftConfirmGuiEventHandler.OVERLAY.getGridScroll();
@@ -502,9 +620,9 @@ public final class GuiSmartCraftStatus extends GuiScreen {
                 this.height,
                 SmartCraftConfirmGuiEventHandler.OVERLAY.getTasks()
                     .size());
+        // (v0.1.8.2) Same DONE-filter applies for grid drag bounds; schedule list stays on full count.
         int totalRows = grid ? SmartCraftStatusLayout.totalGridRows(
-            SmartCraftConfirmGuiEventHandler.OVERLAY.getTasks()
-                .size())
+            SmartCraftConfirmGuiEventHandler.OVERLAY.getGridTaskCount())
             : 1 + SmartCraftConfirmGuiEventHandler.OVERLAY.getTasks()
                 .size();
         int thumbHeight = Math.max(SCROLLBAR_THUMB_MIN_HEIGHT, trackHeight * visibleRows / totalRows);
@@ -533,8 +651,8 @@ public final class GuiSmartCraftStatus extends GuiScreen {
         int bottom = this.gridScrollbarBottom();
         int trackHeight = bottom - top;
         if (trackHeight <= 0) return;
-        int taskCount = SmartCraftConfirmGuiEventHandler.OVERLAY.getTasks()
-            .size();
+        // (v0.1.8.2) DONE-filtered task count drives the grid drag math.
+        int taskCount = SmartCraftConfirmGuiEventHandler.OVERLAY.getGridTaskCount();
         int totalRows = SmartCraftStatusLayout.totalGridRows(taskCount);
         int visibleRows = SmartCraftStatusLayout.GRID_ROWS;
         int maxScroll = SmartCraftStatusLayout.maxGridScroll(taskCount);

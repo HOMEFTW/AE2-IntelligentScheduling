@@ -1,6 +1,28 @@
 # TODO 列表
 
 
+## 2026-04-30（v0.1.9.2 SmartCraft 全局 CPU 占用上限 G13）已完成
+
+> 用户反馈：「Programmable Hatches 的合成 CPU 配合智能合成时会无限创建 cluster 导致服务器卡顿。智能合成最多让合成CPU分配默认50个CPU，可配置。要分清玩家手动 craft，不能影响他们。」
+
+### ✨ 已完成
+
+- [x] **`Config.MAX_CONCURRENT_SMART_CRAFT_SUBMISSIONS = 50`**：forge config `maxConcurrentSmartCraftSubmissions`，0 = 禁用，range 0-1024
+- [x] **`SmartCraftRuntimeSession.countActiveSubmissions()`**：本 session 内 craftingLink != null 的 task 计数
+- [x] **`SmartCraftRuntimeCoordinator.globalActiveSubmissions()`**：跨 sessions 汇总
+- [x] **`dispatchReadyTasks` Phase 3 cap-gate**：超 budget 的 task 标 WAITING_CPU + throttle banner，保留 cached plan，下 tick 重试
+- [x] **`submissionsThrottledByCap` 计数器** + stats 日志加 `activeSubmissions/cap` 字段
+- [x] **2 个新单测**：cap=2 时 4 task 仅 2 RUNNING + 2 throttled；cap=0 sentinel 全放行
+- [x] **modVersion 0.1.9.1 → 0.1.9.2** + log.md changelog + 3 个 jar；33 个测试全过
+
+### 🚧 后续可优化
+
+- [ ] **per-player cap**：现在是全服共享一个 50。多玩家服务器可能需要每个玩家独立 cap（防止一个玩家用大订单挤压其他玩家）
+- [ ] **cap 超载时的 GUI 提示**：目前只在 task tooltip 显示 `Throttled: ...`，可在 order tab bar 上加个可见标记（如黄色感叹号）
+- [ ] **dynamic cap based on AE2 cluster count**：理想情况是检测网络上真实 idle cluster 数自动调，而不是死写 50
+
+---
+
 ## 2026-04-29（v0.1.9.1 标签页图标改为最终产物）已完成
 
 > 用户反馈："UI 中标签页的图标不合理，应该显示的是最终产物的图标，而不是第一步的图标。" 修复 `SmartCraftOrderTabsWidget` 取 task[0] 而不是 root 的 bug。

@@ -1060,6 +1060,136 @@ class SmartCraftRuntimeCoordinatorTest {
         }
     }
 
+    /**
+     * v0.1.9.2 (G13) Global submission cap throttles excess concurrent submissions.
+     *
+     * <p>Setup:
+     * <ul>
+     *   <li>4 independent tasks (distinct requestKeys to bypass the split-serialization gate)</li>
+     *   <li>4 idle CPUs (so the CPU pool itself is never the bottleneck)</li>
+     *   <li>Cap = 2</li>
+     * </ul>
+     *
+     * <p>After tick 1 (planning) + tick 2 (submission attempt for all four), exactly 2 tasks
+     * must reach RUNNING and the other 2 must be in WAITING_CPU carrying the throttle banner.
+     * This is the core guarantee that protects Programmable Hatches' Auto CPU from minting
+     * unbounded clusters under SmartCraft load.
+     */
+    @Test
+    void global_submission_cap_throttles_excess_tasks_v0192() {
+        int savedCap = com.homeftw.ae2intelligentscheduling.config.Config.MAX_CONCURRENT_SMART_CRAFT_SUBMISSIONS;
+        com.homeftw.ae2intelligentscheduling.config.Config.MAX_CONCURRENT_SMART_CRAFT_SUBMISSIONS = 2;
+        try {
+            SmartCraftOrderManager orderManager = new SmartCraftOrderManager();
+            MutableLinkState linkState = new MutableLinkState();
+            SmartCraftRuntimeCoordinator coordinator = new SmartCraftRuntimeCoordinator(
+                orderManager,
+                new Ae2CpuSelector(),
+                (session, task) -> new CompletedFuture(job(false)),
+                (session, task, cpu, job) -> link(linkState),
+                new RecordingSync());
+
+            SmartCraftOrder order = order(
+                task("task-1", SmartCraftStatus.PENDING),
+                task("task-2", SmartCraftStatus.PENDING),
+                task("task-3", SmartCraftStatus.PENDING),
+                task("task-4", SmartCraftStatus.PENDING));
+            UUID orderId = orderManager.track(order);
+            coordinator.register(
+                orderId,
+                sessionWithCpus(
+                    cpu("cpu-1", false),
+                    cpu("cpu-2", false),
+                    cpu("cpu-3", false),
+                    cpu("cpu-4", false)));
+
+            // Tick 1: plan all four. Tick 2: try to submit all four; cap=2 admits only 2.
+            coordinator.tick();
+            coordinator.tick();
+
+            SmartCraftOrder after = orderManager.get(orderId)
+                .get();
+            int running = 0;
+            int throttled = 0;
+            for (SmartCraftTask t : after.layers()
+                .get(0)
+                .tasks()) {
+                if (t.status() == SmartCraftStatus.RUNNING) {
+                    running++;
+                } else if (t.status() == SmartCraftStatus.WAITING_CPU
+                    && t.blockingReason() != null
+                    && t.blockingReason()
+                        .startsWith("Throttled: SmartCraft global submission cap")) {
+                    throttled++;
+                }
+            }
+            assertEquals(2, running, "exactly cap (2) tasks must reach RUNNING");
+            assertEquals(2, throttled, "the remaining 2 tasks must carry the throttle banner");
+            assertEquals(
+                2,
+                coordinator.globalActiveSubmissions(),
+                "globalActiveSubmissions() must equal the number of links granted (= cap)");
+        } finally {
+            com.homeftw.ae2intelligentscheduling.config.Config.MAX_CONCURRENT_SMART_CRAFT_SUBMISSIONS = savedCap;
+        }
+    }
+
+    /**
+     * v0.1.9.2 (G13) Cap = 0 is a sentinel meaning "disabled" \u2014 every task must be free to
+     * submit. Without this carve-out, configuring 0 to disable would lock SmartCraft out
+     * entirely, which is the opposite of the intended semantics.
+     */
+    @Test
+    void global_submission_cap_zero_disables_throttling_v0192() {
+        int savedCap = com.homeftw.ae2intelligentscheduling.config.Config.MAX_CONCURRENT_SMART_CRAFT_SUBMISSIONS;
+        com.homeftw.ae2intelligentscheduling.config.Config.MAX_CONCURRENT_SMART_CRAFT_SUBMISSIONS = 0;
+        try {
+            SmartCraftOrderManager orderManager = new SmartCraftOrderManager();
+            MutableLinkState linkState = new MutableLinkState();
+            SmartCraftRuntimeCoordinator coordinator = new SmartCraftRuntimeCoordinator(
+                orderManager,
+                new Ae2CpuSelector(),
+                (session, task) -> new CompletedFuture(job(false)),
+                (session, task, cpu, job) -> link(linkState),
+                new RecordingSync());
+
+            SmartCraftOrder order = order(
+                task("task-1", SmartCraftStatus.PENDING),
+                task("task-2", SmartCraftStatus.PENDING),
+                task("task-3", SmartCraftStatus.PENDING));
+            UUID orderId = orderManager.track(order);
+            coordinator.register(
+                orderId,
+                sessionWithCpus(cpu("cpu-1", false), cpu("cpu-2", false), cpu("cpu-3", false)));
+
+            coordinator.tick();
+            coordinator.tick();
+
+            SmartCraftOrder after = orderManager.get(orderId)
+                .get();
+            int running = 0;
+            for (SmartCraftTask t : after.layers()
+                .get(0)
+                .tasks()) {
+                if (t.status() == SmartCraftStatus.RUNNING) running++;
+            }
+            assertEquals(3, running, "cap=0 must let every task reach RUNNING (no throttling)");
+        } finally {
+            com.homeftw.ae2intelligentscheduling.config.Config.MAX_CONCURRENT_SMART_CRAFT_SUBMISSIONS = savedCap;
+        }
+    }
+
+    private static SmartCraftRuntimeSession sessionWithCpus(ICraftingCPU... cpus) {
+        return new SmartCraftRuntimeSession(
+            null,
+            null,
+            null,
+            null,
+            null,
+            craftingGrid(Arrays.asList(cpus)),
+            new SmartCraftRequesterBridge(null));
+    }
+
     private static SmartCraftOrder order(SmartCraftTask... tasks) {
         return new SmartCraftOrder(
             new FakeRequestKey("target"),

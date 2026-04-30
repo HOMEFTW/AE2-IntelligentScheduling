@@ -204,6 +204,26 @@ public final class SmartCraftRuntimeSession {
         return task == null ? null : this.executionsByTaskId.get(task.taskKey());
     }
 
+    /**
+     * v0.1.9.2 (G13) Returns how many tasks in this session currently hold an AE2 crafting link
+     * (i.e. occupy a CraftingCPU cluster). Used by
+     * {@code SmartCraftRuntimeCoordinator} to enforce the global submission cap from
+     * {@code Config.MAX_CONCURRENT_SMART_CRAFT_SUBMISSIONS}.
+     *
+     * <p>Counts every execution whose {@code craftingLink} is non-null \u2014 including links that
+     * AE2 has already finished or canceled but that the next reconcile pass has not yet swept
+     * away. This slight over-count is fine: it errs on the side of throttling more, never less,
+     * so the cap is never violated even in the worst-case interleaving where reconcile races
+     * against dispatch.
+     */
+    public int countActiveSubmissions() {
+        int active = 0;
+        for (TaskExecution exe : this.executionsByTaskId.values()) {
+            if (exe.craftingLink() != null) active++;
+        }
+        return active;
+    }
+
     public void trackPlanning(SmartCraftTask task, java.util.concurrent.Future<ICraftingJob> planningFuture,
         long submittedAtTick) {
         if (task == null || planningFuture == null) {

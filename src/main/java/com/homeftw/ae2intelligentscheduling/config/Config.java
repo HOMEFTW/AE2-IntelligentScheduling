@@ -14,6 +14,27 @@ public class Config {
     public static boolean ENABLE_DEBUG_LOGGING = false;
 
     /**
+     * v0.1.9.2 SmartCraft global submission cap. Maximum number of SmartCraft tasks that may be
+     * holding an AE2 craftingLink (i.e. occupying a CraftingCPU cluster) at the same time across
+     * ALL active orders and ALL players. Submission attempts beyond this cap are gated in
+     * {@code SmartCraftRuntimeCoordinator.dispatchReadyTasks} and re-evaluated next tick.
+     *
+     * <p><b>Why this exists:</b> Programmable Hatches' "Auto CPU" multiblock ({@code TileCPU})
+     * creates a brand-new {@code CraftingCPUCluster} on every tick whenever all existing
+     * clusters are busy. SmartCraft can split a single big order into hundreds of parallel
+     * tasks; each task acquires a cluster and the Auto CPU just keeps minting more, eventually
+     * dragging the server tick into garbage-collection territory.
+     *
+     * <p><b>Player isolation:</b> the cap applies <i>only</i> to SmartCraft's dispatch path. A
+     * player who manually presses "Start" on the AE2 Crafting Confirm screen goes through
+     * vanilla AE2 ({@code ContainerCraftConfirm} \u2192 {@code submitJob}) which does NOT touch this
+     * coordinator, so the cap never blocks a manual craft.
+     *
+     * <p>Default 50. Set 0 to disable the cap entirely (revert to pre-v0.1.9.2 behaviour).
+     */
+    public static int MAX_CONCURRENT_SMART_CRAFT_SUBMISSIONS = 50;
+
+    /**
      * Seconds an AE2 planning future may take before the runtime declares it stuck and surfaces a
      * FAILED status. Default 60s covers legitimate big plans on busy networks; raise on heavily
      * modded servers where AE2 + GTNH recipe lookup can take noticeably longer per-node.
@@ -143,6 +164,18 @@ public class Config {
             GENERAL,
             ENABLE_DEBUG_LOGGING,
             "Enable verbose logging for smart craft analysis and scheduling.");
+
+        MAX_CONCURRENT_SMART_CRAFT_SUBMISSIONS = configuration.getInt(
+            "maxConcurrentSmartCraftSubmissions",
+            SCHEDULING,
+            MAX_CONCURRENT_SMART_CRAFT_SUBMISSIONS,
+            0,
+            1024,
+            "Max number of SmartCraft tasks that may simultaneously hold an AE2 crafting link"
+                + " (i.e. occupy a CraftingCPU cluster) across all orders and players. Prevents"
+                + " Programmable Hatches' Auto CPU from minting unbounded clusters when a large"
+                + " order splits into hundreds of parallel tasks. Player-initiated crafts via the"
+                + " AE2 Crafting Confirm screen bypass the cap entirely. 0 = disabled. Default 50.");
 
         PLANNING_TIMEOUT_SECONDS = configuration.getInt(
             "planningTimeoutSeconds",

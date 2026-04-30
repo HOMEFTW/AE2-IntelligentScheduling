@@ -35,15 +35,46 @@ public final class SmartCraftConfirmGuiEventHandler {
 
     private SmartCraftConfirmGuiEventHandler() {}
 
+    /**
+     * v0.1.9.4 (G14) Client-side throttle for the supplementary order-list pull (see onGuiInit).
+     * The primary sync path is the server's PlayerLoggedIn push; this is just a belt-and-suspenders
+     * safety net for cases where that push gets dropped (rare, but the cost of a recovery packet
+     * is one IMessage per GUI open which is negligible). Throttle = 1 second to prevent spam when
+     * the player rapidly toggles between AE2 GUIs.
+     */
+    private static long lastOrderListPullMs = 0L;
+    private static final long ORDER_LIST_PULL_THROTTLE_MS = 1000L;
+
     @SubscribeEvent
     public void onGuiInit(GuiScreenEvent.InitGuiEvent.Post event) {
         if (event.gui instanceof GuiCraftConfirm) {
             initCraftConfirmButtons(event);
+            requestOrderListIfStale();
         } else if (event.gui instanceof GuiCraftingStatus) {
             syncViewStatusButton(event.buttonList, event.gui, SmartCraftScreenFlow.ScreenKind.CRAFTING_STATUS);
+            requestOrderListIfStale();
         } else if (event.gui instanceof appeng.client.gui.implementations.GuiMEMonitorable) {
             syncViewStatusButton(event.buttonList, event.gui, SmartCraftScreenFlow.ScreenKind.TERMINAL);
+            requestOrderListIfStale();
         }
+    }
+
+    /**
+     * v0.1.9.4 (G14) Belt-and-suspenders order-list pull for the ME terminal / craft confirm /
+     * crafting status GUIs. Without this, the v0.1.9.3 deadlock applies: client OVERLAY is empty
+     * after a fresh login -> View Status button doesn't render -> no way to ask the server.
+     *
+     * <p>The server-side PlayerLoggedIn handler (added in the same patch) is the primary fix --
+     * this client-side pull is a safety net for cases where the login push got lost (e.g. the
+     * client wasn't fully ready to receive packets at login time on slow setups). Throttled so a
+     * player rapid-clicking through GUIs doesn't generate one packet per click.
+     */
+    private static void requestOrderListIfStale() {
+        long now = System.currentTimeMillis();
+        if (now - lastOrderListPullMs < ORDER_LIST_PULL_THROTTLE_MS) return;
+        lastOrderListPullMs = now;
+        com.homeftw.ae2intelligentscheduling.network.NetworkHandler.INSTANCE.sendToServer(
+            new com.homeftw.ae2intelligentscheduling.network.packet.RequestOrderStatusPacket());
     }
 
     private void initCraftConfirmButtons(GuiScreenEvent.InitGuiEvent.Post event) {

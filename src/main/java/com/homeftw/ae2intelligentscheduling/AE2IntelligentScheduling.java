@@ -100,6 +100,15 @@ public class AE2IntelligentScheduling {
      */
     public static final com.homeftw.ae2intelligentscheduling.smartcraft.runtime.SmartCraftPersistenceHandler SMART_CRAFT_PERSISTENCE = new com.homeftw.ae2intelligentscheduling.smartcraft.runtime.SmartCraftPersistenceHandler(
         SMART_CRAFT_ORDER_MANAGER);
+    /**
+     * v0.1.9.4 (G14) Pushes the full order list to a player when they log in, fixing the v0.1.9.3
+     * regression where persisted orders never reached the client because the client-side overlay
+     * had no path to discover them after a fresh server start. See
+     * {@link com.homeftw.ae2intelligentscheduling.smartcraft.runtime.SmartCraftLoginSyncHandler}
+     * for the deadlock chain this resolves.
+     */
+    public static final com.homeftw.ae2intelligentscheduling.smartcraft.runtime.SmartCraftLoginSyncHandler SMART_CRAFT_LOGIN_SYNC = new com.homeftw.ae2intelligentscheduling.smartcraft.runtime.SmartCraftLoginSyncHandler(
+        SMART_CRAFT_ORDER_SYNC);
 
     @Mod.Instance
     public static AE2IntelligentScheduling instance;
@@ -166,6 +175,14 @@ public class AE2IntelligentScheduling {
                 .bus()
                 .register(SMART_CRAFT_PERSISTENCE);
             net.minecraftforge.common.MinecraftForge.EVENT_BUS.register(SMART_CRAFT_PERSISTENCE);
+            // v0.1.9.4 (G14) Register the login-sync handler on the FML bus. It listens for
+            // PlayerLoggedInEvent and pushes the full order list to each freshly-connected player
+            // so the client-side overlay knows about persisted orders without waiting for the
+            // player to manually click View Status (which doesn't render until OVERLAY has data --
+            // chicken-and-egg without this hook).
+            cpw.mods.fml.common.FMLCommonHandler.instance()
+                .bus()
+                .register(SMART_CRAFT_LOGIN_SYNC);
             // (v0.1.9 G12) Folds in-flight task statuses (RUNNING / SUBMITTING / WAITING_CPU /
             // VERIFYING_OUTPUT) back to PENDING via SmartCraftOrderManager.resetForRestart. This
             // is now done explicitly here because SmartCraftPersistence.readFromFile delegates

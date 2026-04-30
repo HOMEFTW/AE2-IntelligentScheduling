@@ -87,7 +87,22 @@ public final class RequestSmartCraftActionPacket implements IMessage {
 
             switch (message.getAction()) {
                 case CANCEL_ORDER:
-                    updated = AE2IntelligentScheduling.SMART_CRAFT_RUNTIME.cancel(message.getOrderId());
+                    // v0.1.9.5 (G15) Restart-interrupted orders are historical: the AE2 craftingLink
+                    // is gone and the cluster has already been reset. The player's "Cancel" click
+                    // here means "remove this from my list", not "tell AE2 to roll back". Route to
+                    // removeOrder() so the order vanishes outright instead of going through cancel()
+                    // which would leave it lingering as CANCELLED+visible (since the auto-vanish
+                    // tick path requires an active session, and interrupted orders have none).
+                    {
+                        Optional<SmartCraftOrder> beforeCancel = AE2IntelligentScheduling.SMART_CRAFT_ORDER_MANAGER
+                            .get(message.getOrderId());
+                        if (beforeCancel.isPresent() && beforeCancel.get().interruptedByRestart()) {
+                            updated = AE2IntelligentScheduling.SMART_CRAFT_RUNTIME
+                                .removeOrder(message.getOrderId());
+                        } else {
+                            updated = AE2IntelligentScheduling.SMART_CRAFT_RUNTIME.cancel(message.getOrderId());
+                        }
+                    }
                     break;
                 case CANCEL_ORDER_SOFT:
                     updated = AE2IntelligentScheduling.SMART_CRAFT_RUNTIME.cancelGracefully(message.getOrderId());

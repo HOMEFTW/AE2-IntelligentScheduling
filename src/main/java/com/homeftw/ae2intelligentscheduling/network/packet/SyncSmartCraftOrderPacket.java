@@ -139,6 +139,13 @@ public final class SyncSmartCraftOrderPacket implements IMessage {
      * sessions. Used by the multi-order tab UI to label tabs like '[Steve] hull ×100'.
      */
     private String ownerName;
+    /**
+     * v0.1.9.5 (G15) Mirrors {@link com.homeftw.ae2intelligentscheduling.smartcraft.model.SmartCraftOrder#interruptedByRestart()}
+     * so the client can re-target the cancel button ("remove from list") and grey out retry on
+     * historical orders. Read at the end of the wire format for backward compatibility -- old
+     * clients that don't know about this field fall through with the default {@code false}.
+     */
+    private boolean interruptedByRestart;
     private List<TaskView> tasks;
 
     public SyncSmartCraftOrderPacket() {
@@ -148,7 +155,7 @@ public final class SyncSmartCraftOrderPacket implements IMessage {
 
     private SyncSmartCraftOrderPacket(String orderId, String targetRequestKeyId, ItemStack targetItemStack,
         long targetAmount, String orderScale, String status, int currentLayer, int totalLayers, String ownerName,
-        List<TaskView> tasks) {
+        boolean interruptedByRestart, List<TaskView> tasks) {
         this.orderId = orderId;
         this.targetRequestKeyId = targetRequestKeyId;
         this.targetItemStack = targetItemStack;
@@ -158,6 +165,7 @@ public final class SyncSmartCraftOrderPacket implements IMessage {
         this.currentLayer = currentLayer;
         this.totalLayers = totalLayers;
         this.ownerName = ownerName == null ? "" : ownerName;
+        this.interruptedByRestart = interruptedByRestart;
         this.tasks = new ArrayList<TaskView>(tasks);
     }
 
@@ -211,7 +219,24 @@ public final class SyncSmartCraftOrderPacket implements IMessage {
             order.layers()
                 .size(),
             session == null ? "" : session.ownerName(),
+            order.interruptedByRestart(),
             views);
+    }
+
+    /**
+     * v0.1.9.5 (G15) True when the order was reset by {@code resetForRestart} after a server
+     * restart. The client uses this to:
+     * <ul>
+     * <li>Re-label the cancel button to "remove from list" semantics</li>
+     * <li>Keep the cancel button enabled even though every task is CANCELLED (otherwise
+     * {@code OVERLAY.isOrderActive()} would grey it out and the player couldn't dismiss the
+     * historical entry)</li>
+     * <li>Force-disable the retry button: server-side {@link SmartCraftOrderManager#retryFailedTasks}
+     * also rejects these orders, but the client guard avoids sending a doomed packet.</li>
+     * </ul>
+     */
+    public boolean isInterruptedByRestart() {
+        return this.interruptedByRestart;
     }
 
     public String getOrderId() {
@@ -260,6 +285,11 @@ public final class SyncSmartCraftOrderPacket implements IMessage {
 
     @Override
     public void fromBytes(ByteBuf buf) {
+        // v0.1.9.5 (G15) New field appended at the END of the wire format so a v0.1.9.4-or-earlier
+        // client receiving a v0.1.9.5 server packet still parses every prior field cleanly. The
+        // new field is consumed only when bytes remain after the legacy payload (see end of this
+        // method).
+        this.interruptedByRestart = false;
         this.orderId = ByteBufUtils.readUTF8String(buf);
         this.targetRequestKeyId = ByteBufUtils.readUTF8String(buf);
         // v0.1.9.1: read targetItemStack just after the id so the wire layout mirrors how
@@ -289,6 +319,11 @@ public final class SyncSmartCraftOrderPacket implements IMessage {
                     ByteBufUtils.readUTF8String(buf),
                     ByteBufUtils.readItemStack(buf),
                     buf.readInt()));
+        }
+        // v0.1.9.5 (G15) Tail-appended field. Use readableBytes guard to stay backward-compatible
+        // with v0.1.9.4 server packets which don't include this byte.
+        if (buf.readableBytes() >= 1) {
+            this.interruptedByRestart = buf.readBoolean();
         }
     }
 
@@ -321,6 +356,8 @@ public final class SyncSmartCraftOrderPacket implements IMessage {
             ByteBufUtils.writeItemStack(buf, task.itemStack());
             buf.writeInt(task.failureCount());
         }
+        // v0.1.9.5 (G15) Tail-appended field. See fromBytes for the matching readableBytes guard.
+        buf.writeBoolean(this.interruptedByRestart);
     }
 
     private static String executionStateOf(SmartCraftRuntimeSession session, SmartCraftTask task) {

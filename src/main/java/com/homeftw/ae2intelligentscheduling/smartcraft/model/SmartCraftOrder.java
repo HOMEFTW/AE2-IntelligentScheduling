@@ -20,14 +20,41 @@ public final class SmartCraftOrder {
      * the auto-rebind logic skips orders without an owner.
      */
     private final String ownerName;
+    /**
+     * v0.1.9.5 (G15) Marks an order whose execution was interrupted by a server restart. Set
+     * exclusively by {@link com.homeftw.ae2intelligentscheduling.smartcraft.runtime.SmartCraftOrderManager#resetForRestart}
+     * after persistence load. Drives two pieces of UX-aligned-with-AE2 behaviour:
+     * <ul>
+     * <li><b>Retry disallowed</b> -- {@code retryFailedTasks} returns {@code Optional.empty()} so
+     * the player can't reuse the historical order to schedule new work; instead they should
+     * submit a fresh order for the desired output.</li>
+     * <li><b>Cancel re-targeted</b> -- the {@code CANCEL_ORDER} packet on an interrupted order
+     * routes through {@code removeOrder} (drop from manager) instead of through {@code cancel}
+     * (mark CANCELLED). The order is already CANCELLED and any AE2 craftingLink it once held is
+     * gone; the player's intent when clicking cancel here is "remove this from my list".</li>
+     * </ul>
+     * Default false; the field is only set true on the explicit reset path. Pre-v0.1.9.5 saves
+     * deserialize with false (the field tag is missing) so legacy data round-trips cleanly.
+     */
+    private final boolean interruptedByRestart;
 
     public SmartCraftOrder(SmartCraftRequestKey targetRequestKey, long targetAmount, SmartCraftOrderScale orderScale,
         SmartCraftStatus status, List<SmartCraftLayer> layers, int currentLayerIndex) {
-        this(targetRequestKey, targetAmount, orderScale, status, layers, currentLayerIndex, "");
+        this(targetRequestKey, targetAmount, orderScale, status, layers, currentLayerIndex, "", false);
     }
 
     public SmartCraftOrder(SmartCraftRequestKey targetRequestKey, long targetAmount, SmartCraftOrderScale orderScale,
         SmartCraftStatus status, List<SmartCraftLayer> layers, int currentLayerIndex, String ownerName) {
+        this(targetRequestKey, targetAmount, orderScale, status, layers, currentLayerIndex, ownerName, false);
+    }
+
+    /**
+     * v0.1.9.5 (G15) Canonical 8-arg constructor including the {@code interruptedByRestart}
+     * flag. All other constructors delegate here to keep field initialisation in one place.
+     */
+    public SmartCraftOrder(SmartCraftRequestKey targetRequestKey, long targetAmount, SmartCraftOrderScale orderScale,
+        SmartCraftStatus status, List<SmartCraftLayer> layers, int currentLayerIndex, String ownerName,
+        boolean interruptedByRestart) {
         this.targetRequestKey = targetRequestKey;
         this.targetAmount = targetAmount;
         this.orderScale = orderScale;
@@ -35,6 +62,7 @@ public final class SmartCraftOrder {
         this.layers = layers;
         this.currentLayerIndex = currentLayerIndex;
         this.ownerName = ownerName == null ? "" : ownerName;
+        this.interruptedByRestart = interruptedByRestart;
     }
 
     public static SmartCraftOrder queued(SmartCraftRequestKey targetRequestKey, long targetAmount,
@@ -71,7 +99,28 @@ public final class SmartCraftOrder {
             this.status,
             new ArrayList<SmartCraftLayer>(this.layers),
             this.currentLayerIndex,
-            nextOwnerName);
+            nextOwnerName,
+            this.interruptedByRestart);
+    }
+
+    /**
+     * v0.1.9.5 (G15) See field-level javadoc. True only on orders that were rebuilt from
+     * persistence after a server restart and whose in-flight tasks were folded to CANCELLED.
+     */
+    public boolean interruptedByRestart() {
+        return this.interruptedByRestart;
+    }
+
+    public SmartCraftOrder withInterruptedByRestart(boolean nextFlag) {
+        return new SmartCraftOrder(
+            this.targetRequestKey,
+            this.targetAmount,
+            this.orderScale,
+            this.status,
+            new ArrayList<SmartCraftLayer>(this.layers),
+            this.currentLayerIndex,
+            this.ownerName,
+            nextFlag);
     }
 
     public SmartCraftRequestKey targetRequestKey() {
@@ -119,7 +168,8 @@ public final class SmartCraftOrder {
             nextStatus,
             new ArrayList<SmartCraftLayer>(this.layers),
             this.currentLayerIndex,
-            this.ownerName);
+            this.ownerName,
+            this.interruptedByRestart);
     }
 
     public SmartCraftOrder withLayers(List<SmartCraftLayer> nextLayers) {
@@ -130,7 +180,8 @@ public final class SmartCraftOrder {
             this.status,
             new ArrayList<SmartCraftLayer>(nextLayers),
             this.currentLayerIndex,
-            this.ownerName);
+            this.ownerName,
+            this.interruptedByRestart);
     }
 
     public SmartCraftOrder withLayer(int layerIndex, SmartCraftLayer nextLayer) {
@@ -143,7 +194,8 @@ public final class SmartCraftOrder {
             this.status,
             nextLayers,
             this.currentLayerIndex,
-            this.ownerName);
+            this.ownerName,
+            this.interruptedByRestart);
     }
 
     public SmartCraftOrder withCurrentLayerIndex(int nextLayerIndex) {
@@ -154,7 +206,8 @@ public final class SmartCraftOrder {
             this.status,
             new ArrayList<SmartCraftLayer>(this.layers),
             nextLayerIndex,
-            this.ownerName);
+            this.ownerName,
+            this.interruptedByRestart);
     }
 
     public SmartCraftOrder advanceLayer() {
@@ -184,6 +237,12 @@ public final class SmartCraftOrder {
         tag.setInteger("currentLayerIndex", this.currentLayerIndex);
         if (this.ownerName != null && !this.ownerName.isEmpty()) {
             tag.setString("ownerName", this.ownerName);
+        }
+        // v0.1.9.5 (G15) Persist only when true. Pre-v0.1.9.5 saves don't have this tag and read
+        // back as false naturally; this avoids bloating every order's NBT for a flag that's only
+        // set on the post-restart fold path.
+        if (this.interruptedByRestart) {
+            tag.setBoolean("interruptedByRestart", true);
         }
         NBTTagList layerList = new NBTTagList();
         for (SmartCraftLayer layer : this.layers) {
@@ -228,6 +287,15 @@ public final class SmartCraftOrder {
             if (l != null) layers.add(l);
         }
         String ownerName = tag.hasKey("ownerName") ? tag.getString("ownerName") : "";
-        return new SmartCraftOrder(targetKey, targetAmount, scale, status, layers, currentLayerIndex, ownerName);
+        boolean interruptedByRestart = tag.getBoolean("interruptedByRestart"); // missing key -> false
+        return new SmartCraftOrder(
+            targetKey,
+            targetAmount,
+            scale,
+            status,
+            layers,
+            currentLayerIndex,
+            ownerName,
+            interruptedByRestart);
     }
 }

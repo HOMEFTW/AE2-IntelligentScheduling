@@ -1,5 +1,86 @@
 # 开发日志
 
+## 2026-04-30（v0.1.9.5）：查看调度按钮 fix + 重启对齐 AE2 原版（G15）
+
+### 背景
+
+v0.1.9.4 上线后用户测试反馈：「重启倒是有查看调度按钮了，但是点击后无任何反应」。同时用户提出新方向：希望"重启机制对齐原版 AE2 的机制"——保留订单作为历史，但不能继续调度，按钮变成"从列表删除"。
+
+我把 v0.1.9.3 / v0.1.9.4 的 release 删了（按用户要求），并记下"未来推送必须先询问"的规则到 memory。
+
+### Bug A 根因：查看调度按钮点击无反应
+
+`@/src/main/java/com/homeftw/ae2intelligentscheduling/ClientProxy.java:38-56` 路径分析：
+
+1. 玩家点"查看调度"按钮 → client `onButtonClicked` 调 `requestOpenSmartCraftStatusOnNextSync()` 设 flag=true，然后发 `RequestOrderStatusPacket`
+2. server 收到 → `syncListTo(player)` → 推 **list 包**（`SyncSmartCraftOrderListPacket`）
+3. client 收到 list 包 → `applySmartCraftOrderList` → 只调 `OVERLAY.applyOrderList(packet)`，**不消耗 flag，不打开 GUI**
+4. flag 还是 true，但下一次 sync 不会自动来——只有"提交新订单"才走单包路径打开 GUI
+
+这个 bug **从 v0.1.7（多订单 list 包引入时）就存在**，但之前隐藏：玩家通常先提交新订单（产生单包路径）→ GUI 自然打开。重启场景没单包路径，bug 暴露。
+
+### Bug B 设计：重启对齐 AE2 原版（用户选择方案 C）
+
+AE2 原版重启时 craftingJob 状态全丢，cluster 里残留产物保留供玩家手动 cancel cluster 退回。
+
+我们的智能调度持久化 v0.1.9.3 之后保留了订单，但 sessions 不持久化、craftingLink 失效——v0.1.9 G12 的"folds in-flight tasks 到 PENDING + QUEUED 重新调度"路径在实际场景下不可靠（race / 失序 / cluster 已被 AE2 内部 reset）。
+
+**用户选 C 方案**：保留订单作为历史，重启后**所有非终态 task → CANCELLED**，整个订单 → CANCELLED + `interruptedByRestart=true` 标记。Retry 按钮禁用，Cancel 按钮重新映射为"从列表删除"。
+
+### 设计实现
+
+**Bug A 修复**：
+
+- `ClientProxy.applySmartCraftOrderList` 镜像 `openSmartCraftStatus` 的 GUI 打开逻辑：检查 flag → 用 OVERLAY 的当前订单 packet 作为初始数据打开 `GuiSmartCraftStatus`
+- `SmartCraftOverlayRenderer.currentOrderPacket()`：新增 public accessor 暴露当前订单 packet 给 ClientProxy
+
+**Bug B 实现**（方案 C）：
+
+1. **`SmartCraftOrder.interruptedByRestart`**：新 final boolean 字段
+   - 8 参 canonical 构造（其余构造委托）
+   - 所有 `with*` 方法传递
+   - NBT 持久化：true 时写 `interruptedByRestart` tag，false 不写（避免 NBT bloat）；read 时缺失 = false（向前兼容）
+2. **`SmartCraftOrderManager.resetForRestart`**：fold 行为大改
+   - 非终态 task → `CANCELLED` + banner `"Interrupted by server restart"`
+   - 整个 order → `CANCELLED` + `interruptedByRestart=true`
+   - 所有 task 都已 terminal 的订单（COMPLETED/PAUSED）→ 不打 interrupted 标记，保持原状态
+3. **`SmartCraftOrderManager.retryFailedTasks`**：interrupted 订单返回 `Optional.empty()`（不可 retry）
+4. **`SmartCraftRuntimeCoordinator.removeOrder(orderId)`**：新 API，从 manager 删除订单 + 清 session/retry/markedTerminalLastTick state，返回 `Optional.of(removedOrder)` 让 packet handler sync
+5. **`RequestSmartCraftActionPacket` Handler `CANCEL_ORDER`** 路由：
+   - `order.interruptedByRestart=true` → 调 `removeOrder`（"删除"）
+   - 否则 → 调 `cancel`（mark CANCELLED + cancel link）
+6. **`SyncSmartCraftOrderPacket`** 携带 `interruptedByRestart` 字段（wire format **末尾追加**，旧 client 收新包 fall through 默认 false 向前兼容）
+7. **GUI**：
+   - `OVERLAY.hasRetriableTasks()`：interrupted=true 强制返回 false（retry 按钮 grey out）
+   - `OVERLAY.isOrderActive()`：interrupted=true 强制返回 true（cancel 按钮保持可点）
+   - `OVERLAY.isCurrentOrderInterruptedByRestart()`：新 accessor
+   - `GuiSmartCraftStatus.refreshActionButtonStates`：interrupted 时 cancel 按钮 label 切换为 `gui.ae2intelligentscheduling.removeFromList`
+   - `OVERLAY.drawInfoBar` 状态行追加红色 `重启中断（仅历史查看）` banner
+8. **i18n**：zh_CN + en_US 加 `removeFromList` / `interruptedByRestart` key
+
+### 测试（+5）
+
+- `SmartCraftOrderManagerTest.resetForRestart_folds_in_flight_tasks_to_cancelled_v0195` —— 替换旧 v0.1.9 测试，验证 fold-to-CANCELLED + interruptedByRestart=true
+- `resetForRestart_does_not_mark_interrupted_when_no_task_was_in_flight` —— 已全 terminal 的 PAUSED/COMPLETED 订单**不**打 interrupted 标记
+- `retryFailedTasks_rejects_interrupted_orders` —— interrupted 订单 retry 拒绝
+- `SmartCraftPersistenceTest.interruptedByRestart_field_round_trips_through_nbt` —— NBT round-trip true
+- `interruptedByRestart_defaults_to_false_when_not_persisted` —— false 不写盘 + missing tag 读为 false
+
+125 个测试全过（123 老 + 2 新 + 1 改写覆盖原 v0.1.9 测试）。
+
+### 包
+
+modVersion `0.1.9.4` → `0.1.9.5`，3 个 jar。
+
+### 反思
+
+- **Bug A 是 sync 路径设计盲区**：v0.1.7 引入多订单 list 包时，`applySmartCraftOrderList` 没复用 `openSmartCraftStatus` 的 GUI 打开 flag-consume 逻辑——两个路径分了岔，flag 只在单包侧消费。新代码不该假设玩家"会先创建订单"，每条 sync 路径都要独立处理 GUI 打开请求。修复后两路径行为一致。
+- **方案 C 的"对齐 AE2"是正确的工程取舍**：之前 G12 的"重启自动恢复"听起来美好，但实际上 AE2 内部状态全失效，重新调度等于另起炉灶。用户没法获得"无缝恢复"体验，反而看到一堆 PENDING task 在卡住或重新计划失败。改为"历史归档 + 玩家自行重新提交"既匹配 AE2 行为也减少状态机复杂度——这种放弃幻想的简化在游戏 mod 里通常更稳。
+- **wire-format 向前兼容用 tail-append + readableBytes 守卫**：新加 `interruptedByRestart` 字段我放在 `SyncSmartCraftOrderPacket` 序列化末尾，反序列化用 `buf.readableBytes() >= 1` 守卫——v0.1.9.4 client 收 v0.1.9.5 server 包不会崩，只是该字段读为默认 false。NBT 也是缺失键 = 默认 false。两层 wire-format 都守住了"老客户端不死"。
+- **测试 design：避开 helper 副作用**：`SmartCraftPersistenceTest.interruptedByRestart_*` 的第一版用 `manager.loadFromNBT` 路径，被 `resetForRestart` 副作用搞乱（PENDING task 被 fold 成 interrupted）。改成直接走 `SmartCraftOrder.writeToNBT/readFromNBT` 绕过 manager，断言更精准。每加一个新 fold 路径要警惕：单测如果撞上 helper 副作用就会假阳性。
+
+---
+
 ## 2026-04-30（v0.1.9.4）：补 client OVERLAY 自动 sync（G14）
 
 ### 背景

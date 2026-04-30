@@ -137,6 +137,18 @@ public final class SmartCraftOverlayRenderer {
     }
 
     /**
+     * v0.1.9.5 (G15) Public accessor for the currently-focused order packet. Used by
+     * {@link com.homeftw.ae2intelligentscheduling.ClientProxy#applySmartCraftOrderList} to
+     * supply an initial packet to {@code GuiSmartCraftStatus} when the player triggered a
+     * View-Status request that resolves through the LIST sync path (post-restart scenario --
+     * the single-order sync path bypasses the list packet entirely). Returns null when the
+     * overlay has no data which is the right signal to suppress GUI open.
+     */
+    public SyncSmartCraftOrderPacket currentOrderPacket() {
+        return currentOrder();
+    }
+
+    /**
      * UUID of the currently focused order as a string, or null when no tab is selected. Used by
      * {@link com.homeftw.ae2intelligentscheduling.client.gui.SmartCraftOrderTabsWidget} to render
      * the active-tab highlight.
@@ -557,7 +569,14 @@ public final class SmartCraftOverlayRenderer {
             + ": "
             + (cur.getTotalLayers() <= 0 ? "-" : (cur.getCurrentLayer() + 1) + "/" + cur.getTotalLayers());
         fr.drawString(left, guiLeft + 8, panelY, GuiColors.DefaultBlack.getColor());
-        fr.drawString(tr("status") + ": " + status, guiLeft + 8, panelY + LINE_HEIGHT, statusColor(parsed));
+        // v0.1.9.5 (G15) Append a red "restart-interrupted" tag after the status text on history-
+        // only orders so the player immediately sees the order can't be resumed and the cancel
+        // button is doing list-cleanup, not live cancellation.
+        String statusLine = tr("status") + ": " + status;
+        if (cur.isInterruptedByRestart()) {
+            statusLine += "  " + EnumChatFormatting.RED + tr("interruptedByRestart");
+        }
+        fr.drawString(statusLine, guiLeft + 8, panelY + LINE_HEIGHT, statusColor(parsed));
 
         String right = tr("taskCount") + ": "
             + cur.getTasks()
@@ -933,6 +952,10 @@ public final class SmartCraftOverlayRenderer {
     public boolean hasRetriableTasks() {
         SyncSmartCraftOrderPacket cur = currentOrder();
         if (cur == null) return false;
+        // v0.1.9.5 (G15) Restart-interrupted orders are historical and cannot be retried.
+        // Mirrors the server-side guard in SmartCraftOrderManager#retryFailedTasks; this client
+        // check is just to grey out the button so the player doesn't waste a click.
+        if (cur.isInterruptedByRestart()) return false;
         for (TaskView task : cur.getTasks()) {
             SmartCraftStatus s = task.status();
             if (s == SmartCraftStatus.FAILED || s == SmartCraftStatus.CANCELLED) {
@@ -950,6 +973,13 @@ public final class SmartCraftOverlayRenderer {
     public boolean isOrderActive() {
         SyncSmartCraftOrderPacket cur = currentOrder();
         if (cur == null) return false;
+        // v0.1.9.5 (G15) Restart-interrupted orders DO have all-terminal tasks (every in-flight
+        // task was folded to CANCELLED), but the cancel button must remain enabled so the player
+        // can dismiss the historical entry from their list (the server routes the click through
+        // removeOrder() instead of cancel() for these). Treat "interrupted" as "active for the
+        // purposes of the cancel button" -- the button label flips via
+        // {@link #isCurrentOrderInterruptedByRestart} so the player sees "Remove" not "Cancel".
+        if (cur.isInterruptedByRestart()) return true;
         for (TaskView task : cur.getTasks()) {
             SmartCraftStatus s = task.status();
             if (s != null && !s.isTerminalTaskState()) {
@@ -957,6 +987,17 @@ public final class SmartCraftOverlayRenderer {
             }
         }
         return false;
+    }
+
+    /**
+     * v0.1.9.5 (G15) Returns true when the focused order was reset by the post-restart fold path.
+     * The status GUI uses this to swap the cancel button's label from "Cancel Order" to "Remove
+     * from List" so the player understands the click is a list-cleanup rather than a live
+     * cancellation. False when no order is focused or the focused order is a normal active one.
+     */
+    public boolean isCurrentOrderInterruptedByRestart() {
+        SyncSmartCraftOrderPacket cur = currentOrder();
+        return cur != null && cur.isInterruptedByRestart();
     }
 
     // --- Color helpers ---

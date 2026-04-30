@@ -1,6 +1,45 @@
 # TODO 列表
 
 
+## 2026-04-30（v0.1.9.5 查看调度按钮 fix + 重启对齐 AE2 原版 G15）已完成
+
+> 用户反馈：「重启倒是有查看调度按钮了，但是点击后无任何反应」。同时要求"重启机制对齐原版 AE2 的机制"，选 C 方案：保留订单作为历史 + 不能继续调度 + 取消按钮变"删除"。
+>
+> 之前 v0.1.9.3 / v0.1.9.4 的 GitHub release 已按用户要求删除。memory 已记下"未来推送必须先询问"。
+
+### ✨ 已完成
+
+**Bug A：查看调度按钮无反应**
+
+- [x] **`ClientProxy.applySmartCraftOrderList`**：list 包路径也消费 `openSmartCraftStatusOnNextSync` flag 并打开 `GuiSmartCraftStatus`（之前只单包路径消费）
+- [x] **`SmartCraftOverlayRenderer.currentOrderPacket()`**：暴露 currentOrder 给 ClientProxy
+
+**Bug B：方案 C 落地（重启对齐 AE2）**
+
+- [x] **`SmartCraftOrder.interruptedByRestart`**：新 final 字段 + canonical 8 参构造 + 所有 with* 方法 + NBT 持久化（true 才写，缺失 = false 向前兼容）
+- [x] **`SmartCraftOrderManager.resetForRestart` 改造**：非终态 task → CANCELLED + banner，整体 → CANCELLED + interrupted=true。已全 terminal 的不打标记
+- [x] **`SmartCraftOrderManager.retryFailedTasks` 守卫**：interrupted 订单返回 empty
+- [x] **`SmartCraftRuntimeCoordinator.removeOrder(orderId)`** 新 API：从 manager 删订单 + 清 session/retry/markedTerminalLastTick state
+- [x] **`RequestSmartCraftActionPacket` CANCEL_ORDER 路由**：interrupted=true → removeOrder，否则 → cancel
+- [x] **`SyncSmartCraftOrderPacket`** 携带 interruptedByRestart 字段（wire format 末尾追加，旧 client 兼容）
+- [x] **GUI**：retry 按钮 grey out、cancel 按钮保持可点 + label 切"删除"、状态行红色"重启中断"banner
+- [x] **i18n**：zh_CN + en_US 加 `removeFromList` / `interruptedByRestart` key
+- [x] **5 个新测试**：resetForRestart fold-to-CANCELLED / 全 terminal 不打标记 / retry 拒绝 / NBT round-trip / 默认 false 不写
+- [x] **modVersion 0.1.9.4 → 0.1.9.5**；125 个测试全过
+
+### 🚧 后续可优化
+
+- [ ] **`/smartcraft clearhistory` 命令**：批量删除所有 interrupted 订单。当前要逐个点 cancel 按钮——大量 historical 订单时不便。
+- [ ] **interrupted 订单自动过期**：interrupted 订单超过 N 天自动删除（避免无限累积）
+- [ ] **GUI 单独 Tab**：interrupted 订单可与 active 订单视觉分组（前缀图标 / 半透明 tab），方便玩家区分
+- [ ] **Cancel 按钮二次确认**：interrupted 订单 cancel = 永久删除，可加 shift-click 二次确认防误删
+
+### 等待用户确认
+
+- [ ] **是否推送/发布 v0.1.9.5**？按 memory 规则不主动推送，等用户指令。
+
+---
+
 ## 2026-04-30（v0.1.9.4 补 client OVERLAY 自动 sync G14）已完成
 
 > 用户报告：「重启后查看调度按钮消失，过一会所有订单自动取消」。v0.1.9.3 持久化已生效（dat 文件正常写盘 + 加载），但 client OVERLAY 启动后是空的，"查看调度"按钮 hasData 检查失败 → 按钮不显示 → 玩家无法触发 sync 请求 → 死循环。"自动取消" 是用户对"标签栏空"的合理推测，订单实际仍在 server manager 中。

@@ -123,6 +123,16 @@ public final class GuiSmartCraftStatus extends GuiScreen {
     private void refreshActionButtonStates() {
         if (this.cancelButton != null) {
             this.cancelButton.enabled = SmartCraftConfirmGuiEventHandler.OVERLAY.isOrderActive();
+            // v0.1.9.5 (G15) Re-purpose the cancel button on restart-interrupted orders: those
+            // orders have no live AE2 work to cancel; the click is a list-cleanup. Swap the
+            // localized label so the GUI tells the truth about what the click does.
+            if (SmartCraftConfirmGuiEventHandler.OVERLAY.isCurrentOrderInterruptedByRestart()) {
+                this.cancelButton.displayString = StatCollector
+                    .translateToLocal("gui.ae2intelligentscheduling.removeFromList");
+            } else {
+                this.cancelButton.displayString = StatCollector
+                    .translateToLocal("gui.ae2intelligentscheduling.cancelOrder");
+            }
         }
         if (this.retryButton != null) {
             this.retryButton.enabled = SmartCraftConfirmGuiEventHandler.OVERLAY.hasRetriableTasks();

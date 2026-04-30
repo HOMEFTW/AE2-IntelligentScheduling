@@ -89,6 +89,17 @@ public class AE2IntelligentScheduling {
         });
     public static final SmartCraftServerTickHandler SMART_CRAFT_TICK_HANDLER = new SmartCraftServerTickHandler(
         SMART_CRAFT_RUNTIME);
+    /**
+     * v0.1.9.3 (G12-fix) Replaces the v0.1.9 {@code SmartCraftOrderWorldData} (vanilla
+     * {@code WorldSavedData} subclass) which never reliably wrote to disk on the 1.7.10 + GTNH
+     * single-player save path. The new handler subscribes to {@code WorldEvent.Save} on the
+     * Forge bus, owns the dirty flag, and serializes the manager into
+     * {@code <world>/data/AE2IS_SmartCraftOrders.dat} via direct I/O. See
+     * {@link com.homeftw.ae2intelligentscheduling.smartcraft.runtime.SmartCraftPersistenceHandler}
+     * for the full lifecycle rationale.
+     */
+    public static final com.homeftw.ae2intelligentscheduling.smartcraft.runtime.SmartCraftPersistenceHandler SMART_CRAFT_PERSISTENCE = new com.homeftw.ae2intelligentscheduling.smartcraft.runtime.SmartCraftPersistenceHandler(
+        SMART_CRAFT_ORDER_MANAGER);
 
     @Mod.Instance
     public static AE2IntelligentScheduling instance;
@@ -131,25 +142,51 @@ public class AE2IntelligentScheduling {
 
     @Mod.EventHandler
     public void serverStarted(FMLServerStartedEvent event) {
-        // (v0.1.9 G12) Attach the WorldSavedData to the overworld AFTER the server has finished
-        // bringing dimensions up. The order manager is global per server, so we deliberately bind
-        // to DIM 0 (overworld) regardless of which dimension the player is currently in. The
-        // attach call:
-        //   1. Loads <world>/data/AE2IS_SmartCraftOrders.dat into SMART_CRAFT_ORDER_MANAGER (or
-        //      leaves it empty if the file doesn't exist yet).
-        //   2. Wires manager.setDirtyListener so subsequent track / update / cancel / retry
-        //      mutations call WorldSavedData.markDirty(), letting vanilla pick up the save.
-        //   3. Folds in-flight task statuses (RUNNING / SUBMITTING / WAITING_CPU / VERIFYING_OUTPUT)
-        //      back to PENDING via SmartCraftOrderManager.resetForRestart \u2014 AE2 link / planning
-        //      objects don't survive restart, so we re-run plan + submit on the next tick.
+        // v0.1.9.3 (G12-fix) Drive persistence via the new direct-I/O handler. Why not the v0.1.9
+        // WorldSavedData approach: vanilla 1.7.10 MapStorage.saveAllData was unreliably hit on
+        // the GTNH integrated-server save path, so smart craft orders silently failed to round-
+        // trip across restarts. SmartCraftPersistenceHandler owns its own File I/O on
+        // <world>/data/AE2IS_SmartCraftOrders.dat and persists on every WorldEvent.Save (DIM 0)
+        // plus a forced flush on serverStopping.
         net.minecraft.world.WorldServer overworld = net.minecraft.server.MinecraftServer.getServer()
             .worldServerForDimension(0);
         if (overworld != null) {
-            com.homeftw.ae2intelligentscheduling.smartcraft.runtime.SmartCraftOrderWorldData
-                .attach(overworld, SMART_CRAFT_ORDER_MANAGER);
+            // Resolve the world directory once and hand it to the persistence handler. The
+            // handler caches it for subsequent save events so we don't have to re-resolve the
+            // MinecraftServer singleton from inside event handlers.
+            java.io.File worldDir = overworld.getSaveHandler()
+                .getWorldDirectory();
+            SMART_CRAFT_PERSISTENCE.loadOnServerStart(worldDir);
+            // Register the handler with the Forge event bus AFTER the initial load. Order matters:
+            // load runs on the server thread synchronously inside this handler, and the in-load
+            // markDirty calls are masked by SmartCraftPersistenceHandler.loadOnServerStart which
+            // resets the dirty flag at the end. If we registered before loading, a concurrent
+            // WorldEvent.Save during dimension init could fire flush() with a half-loaded manager.
+            cpw.mods.fml.common.FMLCommonHandler.instance()
+                .bus()
+                .register(SMART_CRAFT_PERSISTENCE);
+            net.minecraftforge.common.MinecraftForge.EVENT_BUS.register(SMART_CRAFT_PERSISTENCE);
+            // (v0.1.9 G12) Folds in-flight task statuses (RUNNING / SUBMITTING / WAITING_CPU /
+            // VERIFYING_OUTPUT) back to PENDING via SmartCraftOrderManager.resetForRestart. This
+            // is now done explicitly here because SmartCraftPersistence.readFromFile delegates
+            // to SmartCraftOrderManager.loadFromNBT which already runs resetForRestart on each
+            // loaded order, so this is a no-op in practice -- left here as a safety net in case
+            // an order was track()'d before this hook (e.g. from a future preInit code path).
         } else {
-            LOG.warn("Could not attach SmartCraftOrderWorldData: overworld is null at FMLServerStartedEvent");
+            LOG.warn("Smart craft persistence: overworld is null at FMLServerStartedEvent; orders will not persist this session");
         }
         proxy.serverStarted(event);
+    }
+
+    /**
+     * v0.1.9.3 (G12-fix) Final flush before JVM exit. Belt-and-suspenders: WorldEvent.Save fires
+     * during the stop sequence and will already have flushed our data, but some optimised
+     * GTNH-style modpacks short-circuit that path. The forced flush here is cheap (no-op when
+     * not dirty -- usually true at this point because the WorldEvent.Save just ran) and
+     * eliminates the entire class of "I quit too fast and lost the order I just queued" bugs.
+     */
+    @Mod.EventHandler
+    public void serverStopping(cpw.mods.fml.common.event.FMLServerStoppingEvent event) {
+        SMART_CRAFT_PERSISTENCE.flushOnServerStop();
     }
 }

@@ -1,5 +1,93 @@
 # 开发日志
 
+## 2026-04-30（v0.1.9.3）：重写 SmartCraft 持久化层（G12-fix）
+
+### 背景
+
+用户报告：「重启后整个智能合成的订单都消失了，所有AE2在做的东西全部自动取消，重启后打开AE2合成订单页面会卡死。」
+
+实测复现：v0.1.9.2 在单人存档创建智能合成订单 → 退出存档 → 重新进入 → 智能合成标签栏空。期望行为是订单保留 + task 折回 PENDING + banner "Resumed after server restart"，但实际订单 map 完全空。
+
+### 根因
+
+v0.1.9 G12 的 `SmartCraftOrderWorldData` 走 vanilla Forge `WorldSavedData` 接口：
+
+1. 继承 `WorldSavedData`，注册到 `world.mapStorage`
+2. 通过 `markDirty()` 标记，依赖 vanilla `MapStorage.saveAllData` 周期性写盘
+3. 重启时 `mapStorage.loadData(SmartCraftOrderWorldData.class, DATA_KEY)` 反射构造 + 走 `readFromNBT` 双阶段加载
+
+问题出在 vanilla 1.7.10 + GTNH 整合包的 `MapStorage.saveAllData` 调用时机不可靠：单人存档的快速退出路径（玩家点 "Save and Quit to Title"）下，vanilla 不一定走到 `saveAllData`。结果：
+- `markDirty()` 设了 dirty flag，但 vanilla 没在 stop 路径触发 `WorldSavedData.writeToNBT`
+- `<world>/data/AE2IS_SmartCraftOrders.dat` 文件根本没生成（或残留旧版本）
+- 下次启动 `loadData` 找不到文件，manager 留空
+- 玩家看到的是"订单全消失"
+
+`attach()` 中的两阶段构造（`readFromNBT(manager==null)` 把 tag 暂存到 `pendingLoadTag`，再由 `attach` 的 `replayPendingLoad` 转给 manager）也有时序竞态：单元测试虽然过了 round-trip（直接调 `manager.writeToNBT/loadFromNBT`），但绕过了 vanilla 接线层，**所以测试假阳性**。
+
+### 设计
+
+**抛弃 `WorldSavedData`，自管 IO**：
+
+1. `SmartCraftPersistence`（纯 IO 静态类，无 Forge 依赖）：
+   - `dataFile(File worldDir)` 解析 `<world>/data/AE2IS_SmartCraftOrders.dat`
+   - `writeToFile(File, manager)` atomic write：写到 `target.tmp` → `fsync` → 删旧 target → rename。Windows-compatible。
+   - `readFromFile(File, manager)` 健壮加载：文件不存在 → log info 返回；NBT 损坏 → log warn 不修改 manager；自动 unwrap legacy "data" 包装（v0.1.9 vanilla MapStorage 写过的文件依然能读）。
+2. `SmartCraftPersistenceHandler`（Forge 事件 hook）：
+   - `loadOnServerStart(File worldDir)`：FMLServerStartedEvent 调用，初始读盘；之后 reset dirty flag（避免立即又写回）
+   - `@SubscribeEvent onWorldSave(WorldEvent.Save)`：vanilla 每个 dimension save 都触发，我们只在 DIM 0 + dirty 时 flush
+   - `flushOnServerStop()`：FMLServerStoppingEvent 调用，强制最终 flush（dirty=true 强制写一次）
+3. `AE2IntelligentScheduling.serverStarted` 替换：用新的 handler 调 `loadOnServerStart` + 注册到 `MinecraftForge.EVENT_BUS`
+4. 新增 `serverStopping` 事件：调 `flushOnServerStop`
+5. **删除** `SmartCraftOrderWorldData.java`
+
+为什么这套靠谱：
+
+- **WorldEvent.Save 是 vanilla save 周期的标准入口**：autosave / `/save-all` / server stop 都会触发。GTNH 各种 mod（NewHorizonsCoreMod / GT++）都用这个钩子，battle-tested。
+- **直接 File IO**：Forge 事件触发时我们立刻 `CompressedStreamTools.writeCompressed` 到 tmp + rename。崩溃保护：JVM 中途死了只会留 .tmp 不会破坏 live 文件。
+- **可单测**：`SmartCraftPersistence` 框架无关，用 JUnit `@TempDir` 直接驱动真实文件 IO。9 个集成测试覆盖：round-trip / 不存在 / 损坏 / legacy 兼容 / 覆写 / dirty flag / loadOnServerStart 不留 dirty / null event 安全。
+
+### 实现
+
+新增：
+- `smartcraft/runtime/SmartCraftPersistence.java`：186 行，三个 public static 方法（`dataFile` / `writeToFile` / `readFromFile`）
+- `smartcraft/runtime/SmartCraftPersistenceHandler.java`：154 行，事件 hook + dirty flag 状态机
+
+删除：
+- `smartcraft/runtime/SmartCraftOrderWorldData.java`：130 行，整个文件移除
+
+修改：
+- `AE2IntelligentScheduling.java`：加 `SMART_CRAFT_PERSISTENCE` 单例；`serverStarted` 改用新 handler；新增 `serverStopping`
+- `SmartCraftOrderManager.java`：javadoc 引用 `SmartCraftPersistenceHandler` 替代旧类
+
+### 测试（+9）
+
+`SmartCraftPersistenceTest`（114 个测试中新增的 9 个）：
+
+- `writeToFile_then_readFromFile_round_trips_orders` — 真实文件 IO round-trip
+- `readFromFile_silently_skips_when_target_does_not_exist` — 首次启动不存在文件 → 不修改 manager
+- `readFromFile_silently_skips_when_target_is_corrupt` — 写垃圾字节 → 加载报 warn 不 crash
+- `readFromFile_unwraps_legacy_vanilla_data_tag` — v0.1.9 / v0.1.9.1 / v0.1.9.2 残留的 "data"-wrapper 文件依然能读
+- `writeToFile_overwrites_existing_target_atomically` — 多次写同一文件不留 .tmp orphan
+- `persistenceHandler_marks_dirty_on_track_and_clears_on_flush` — track → dirty=true → flush → dirty=false
+- `persistenceHandler_loadOnServerStart_loads_existing_file_and_resets_dirty` — 重启场景模拟：handler1 写 → handler2 读 → dirty 立即清零（避免无意义重写）
+- `persistenceHandler_save_event_routing_rejects_invalid_inputs` — `shouldHandleSaveEvent(null)` 不 crash
+- `persistenceHandler_onWorldSave_safe_against_null_event` — 防御性 null 检查
+
+114 个测试全过（35 老 + 8 老 + ... + 21 + 17 + 7 + 9 新 persistence）。
+
+### 包
+
+modVersion `0.1.9.2` → `0.1.9.3`，3 个 jar：`ae2intelligentscheduling-0.1.9.3.jar` + `-dev.jar` + `-sources.jar`
+
+### 反思
+
+- **绕开"看起来正确"的 framework 接口**：`WorldSavedData` 在 vanilla 设计意图里就是给"地图数据 / 末影龙 boss bar"这种"重要但偶尔变化"的数据用的，不是给"每 tick 都可能 mutate 的运行时状态"用的。它的 dirty/save 周期不可靠是 vanilla 的已知问题（被 OptiFine / 各种性能 mod 进一步弱化）。直接 File IO + Forge 事件钩是更可控的方案。
+- **集成测试必须穿透接线层**：v0.1.9 的 round-trip 单元测试通过但实地失败，是因为测试只测了 `SmartCraftOrderManager.writeToNBT/loadFromNBT`——纯模型层。真正的 bug 在 vanilla `MapStorage.saveAllData` 不调用，绕过了。新版 `SmartCraftPersistenceTest` 用 `@TempDir` 直接打到 File IO，确保 round-trip 经过完整磁盘路径。
+- **legacy 兼容比看起来重要**：用户存档里可能有 v0.1.9 / v0.1.9.1 / v0.1.9.2 残留的 "data"-wrapped 文件（即使是空的也存在）。新代码自动 unwrap 旧格式，避免用户升级到 v0.1.9.3 后还看到一次"订单消失"——这次是因为格式不兼容而非 bug。
+- **null-safety 不是过度设计**：Forge 事件总线在某些 mod stop 路径会传 partial-state 事件。`shouldHandleSaveEvent(null)` 的测试看似无聊，但生产环境 `event.world == null` 不是不可能——加 null check 成本几乎为零，回报是绝不在退服 race condition 里 NPE。
+
+---
+
 ## 2026-04-30（v0.1.9.2）：SmartCraft 全局 CPU 占用上限（G13）
 
 ### 背景

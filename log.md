@@ -1,5 +1,75 @@
 # 开发日志
 
+## 2026-04-30（v0.1.9.4）：补 client OVERLAY 自动 sync（G14）
+
+### 背景
+
+v0.1.9.3 持久化已上线（File IO + WorldEvent.Save），但用户反馈：「重启后查看调度按钮消失，过一会所有订单自动取消」。
+
+### 根因（不是持久化）
+
+服务端 dat 文件已正确写入并加载，订单仍在 manager 里。问题是**客户端 OVERLAY 不知道**：
+
+1. 客户端启动时 `SmartCraftOverlayRenderer.OVERLAY` 是空的
+2. server 端 `SmartCraftOrderSyncService.syncListTo` 只在玩家**主动请求**时触发（`RequestOrderStatusPacket` / `RequestSmartCraftActionPacket`）
+3. 没有 `PlayerLoggedInEvent` hook — 玩家进入存档后 server 不会主动推订单列表
+4. 玩家打开 ME 终端 → `OVERLAY.hasData() = false` → `shouldShowViewStatusButton` 返回 false → **"查看调度"按钮不显示**
+5. 玩家**没法**通过点按钮触发请求 → 死循环
+
+「自动取消」是用户对「标签栏空 + 按钮不显示」的合理推测。`SmartCraftRuntimeCoordinator.tick()` 只遍历 `this.sessions`（重启后空），不会动 manager 里的订单。所以订单**实际上没被取消**，只是客户端看不到。
+
+这是 v0.1.9 G12 引入持久化时的回归：以前没持久化，"重启 = 订单丢" 是预期行为，玩家不期望看到旧订单；加了持久化后玩家期望看到，但 client sync 链路从未为此设计。
+
+### 设计
+
+双层 sync 触发：
+
+**层 1（主）：服务端 `PlayerLoggedInEvent` 主动推**
+- 新建 `SmartCraftLoginSyncHandler`，订阅 `cpw.mods.fml.common.gameevent.PlayerEvent.PlayerLoggedInEvent`
+- 玩家上线时调 `syncListTo(player)`，推送当前 manager 的全量订单列表
+- 注册到 `FMLCommonHandler.bus()`（FML 玩家事件走这个 bus，与 `WorldEvent.Save` 走的 Forge bus 不同）
+- 测试友好：handler 接受 `Pusher` 函数式接口（生产代码用 method reference 适配 SyncService），方便单测注入 lambda 而不需要 mock 整个网络层
+
+**层 2（补偿）：客户端打开 ME/CraftConfirm/CraftingStatus 时节流拉取**
+- `SmartCraftConfirmGuiEventHandler.onGuiInit` 在三种 GUI 初始化后发 `RequestOrderStatusPacket`
+- 节流 1 秒（`ORDER_LIST_PULL_THROTTLE_MS`）防玩家快速切换 GUI 刷屏
+- 主要是兜底：万一 PlayerLoggedIn 推丢失（slow 客户端 packet 还没就绪），打开终端时仍能恢复
+
+### 实现
+
+新增：
+- `smartcraft/runtime/SmartCraftLoginSyncHandler.java`：100 行，FML 事件 hook + Pusher 函数式接口
+
+修改：
+- `AE2IntelligentScheduling.java`：加 `SMART_CRAFT_LOGIN_SYNC` 单例，`serverStarted` 中注册到 `FMLCommonHandler.bus()`
+- `client/gui/SmartCraftConfirmGuiEventHandler.java`：`onGuiInit` 在三种 AE2 GUI 初始化后调 `requestOrderListIfStale`，节流 1 秒
+
+### 测试（+7）
+
+`SmartCraftLoginSyncHandlerTest` 7 个：
+
+- `constructor_rejects_null_pusher` / `constructor_rejects_null_sync_service` — null 入参 → IllegalArgumentException
+- `onPlayerLoggedIn_silently_skips_when_event_is_null` — null 事件 → no-op，pusher 不调用
+- `onPlayerLoggedIn_silently_skips_when_player_is_null` — null 玩家 → no-op
+- `onPlayerLoggedIn_isolates_pusher_throws` — pusher 抛异常 → handler 不传播（防止破坏 FML 玩家登录流）
+- `pusher_abstraction_records_calls_in_order` — Pusher 接口契约
+- `handler_with_recording_pusher_threads_player_through_unchanged` — 文档锚点（说明集成路径覆盖范围）
+
+121 个测试全过（114 老 + 7 新 login sync）。
+
+### 包
+
+modVersion `0.1.9.3` → `0.1.9.4`，3 个 jar。
+
+### 反思
+
+- **持久化跟显示是两件事**：v0.1.9 G12 只做了"数据持久化"，没做"客户端从持久化恢复后的初始 sync 通路"。这两层在 vanilla 设计里有时是耦合的（比如玩家 inventory），但在我们的客户端 overlay 架构里不耦合 — 必须显式 sync。
+- **deadlock 排查教训**：UI 按钮"显示与否"依赖于"客户端是否有数据"，而"获取数据"又依赖于"按钮被点击"。这种循环依赖在常态（玩家提交新订单走 OpenSmartCraftPreviewPacket → server reply）下隐藏，重启场景才暴露。审查 GUI flag 路径时要明确"启动状态下能否走通"。
+- **双层 sync 触发的合理性**：服务端 push 是主路径，客户端 pull 是补偿。这种 belt-and-suspenders 在网络层不可靠时（如 GTNH 玩家电脑配置千差万别）是合理的冗余。节流 1 秒已经吸收 99% 的 spam。
+- **测试可注入性的代价是值得的**：把 `SmartCraftLoginSyncHandler` 接受 `Pusher` 函数式接口（而不是直接接 `SmartCraftOrderSyncService`）只多了 6 行代码，但获得了完整的单测覆盖。生产构造函数依然用 method reference 适配旧 SyncService，对调用方零侵入。
+
+---
+
 ## 2026-04-30（v0.1.9.3）：重写 SmartCraft 持久化层（G12-fix）
 
 ### 背景

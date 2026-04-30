@@ -1,6 +1,27 @@
 # TODO 列表
 
 
+## 2026-04-30（v0.1.9.4 补 client OVERLAY 自动 sync G14）已完成
+
+> 用户报告：「重启后查看调度按钮消失，过一会所有订单自动取消」。v0.1.9.3 持久化已生效（dat 文件正常写盘 + 加载），但 client OVERLAY 启动后是空的，"查看调度"按钮 hasData 检查失败 → 按钮不显示 → 玩家无法触发 sync 请求 → 死循环。"自动取消" 是用户对"标签栏空"的合理推测，订单实际仍在 server manager 中。
+
+### ✨ 已完成
+
+- [x] **`SmartCraftLoginSyncHandler`**：FML `PlayerLoggedInEvent` hook，玩家上线主动推 `SyncSmartCraftOrderListPacket`
+- [x] **`Pusher` 函数式接口**：handler 不直接耦合 final SyncService，单测可注入 lambda
+- [x] **`SmartCraftConfirmGuiEventHandler.onGuiInit` 节流补偿**：打开 ME/CraftConfirm/CraftingStatus 时发 `RequestOrderStatusPacket`，节流 1 秒
+- [x] **`AE2IntelligentScheduling.serverStarted` 注册 LoginSyncHandler 到 FML bus**
+- [x] **7 个单测**：null-safety / pusher 异常隔离 / Pusher 接口契约
+- [x] **modVersion 0.1.9.3 → 0.1.9.4** + log.md changelog；121 个测试全过
+
+### 🚧 后续可优化
+
+- [ ] **基于 packet ID 的去重 ack**：当前 server 推 + client 拉可能在同一秒触发两次 sync。Sync 包做去重 ID 后，client 只在收到 stale ack 时拉取。
+- [ ] **更精细的玩家 join 时序**：PlayerLoggedInEvent 在 client 完成完整 packet handshake 之前可能就触发了，这种情况下 sync 包可能被丢。可以延后到 `PlayerEvent.PlayerChangedDimensionEvent` 第一次（玩家进入维度）再触发。
+- [ ] **移除 client 节流补偿**（如果上面 ack 机制做了）：补偿层目前是冗余路径，正常情况下浪费一个 packet。等 server push 链路验证 100% 可靠后可砍。
+
+---
+
 ## 2026-04-30（v0.1.9.3 重写 SmartCraft 持久化 G12-fix）已完成
 
 > 用户报告：「重启后整个智能合成的订单都消失了，所有AE2在做的东西全部自动取消，重启后打开AE2合成订单页面会卡死」。v0.1.9 G12 走 vanilla `WorldSavedData` 的实现在 GTNH 1.7.10 单人路径上 `MapStorage.saveAllData` 不可靠地被调用，订单文件实际上没写到 `<world>/data/AE2IS_SmartCraftOrders.dat`。

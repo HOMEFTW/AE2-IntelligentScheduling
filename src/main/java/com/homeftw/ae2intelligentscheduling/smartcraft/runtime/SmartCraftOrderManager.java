@@ -38,8 +38,9 @@ public final class SmartCraftOrderManager {
     private final Map<UUID, SmartCraftOrder> orders = new LinkedHashMap<UUID, SmartCraftOrder>();
     /**
      * v0.1.9 (G12) Defaults to no-op so unit tests don't need to wire a listener. Production
-     * setup ({@code AE2IntelligentScheduling#serverStarted}) injects a real listener that
-     * delegates to {@code SmartCraftOrderWorldData.markDirty()}.
+     * setup ({@code AE2IntelligentScheduling#serverStarted}) injects a real listener via
+     * {@link com.homeftw.ae2intelligentscheduling.smartcraft.runtime.SmartCraftPersistenceHandler}
+     * which raises a dirty flag consumed on the next {@code WorldEvent.Save} (DIM 0).
      */
     private DirtyListener dirtyListener = () -> {};
 

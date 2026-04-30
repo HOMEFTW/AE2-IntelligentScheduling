@@ -1,6 +1,27 @@
 # TODO 列表
 
 
+## 2026-04-30（v0.1.9.3 重写 SmartCraft 持久化 G12-fix）已完成
+
+> 用户报告：「重启后整个智能合成的订单都消失了，所有AE2在做的东西全部自动取消，重启后打开AE2合成订单页面会卡死」。v0.1.9 G12 走 vanilla `WorldSavedData` 的实现在 GTNH 1.7.10 单人路径上 `MapStorage.saveAllData` 不可靠地被调用，订单文件实际上没写到 `<world>/data/AE2IS_SmartCraftOrders.dat`。
+
+### ✨ 已完成
+
+- [x] **`SmartCraftPersistence`**：纯 IO 类，atomic write（tmp + fsync + Windows-compatible rename）+ corrupt-safe read + legacy "data"-wrapper unwrap
+- [x] **`SmartCraftPersistenceHandler`**：Forge 事件 hook，`loadOnServerStart` / `@SubscribeEvent onWorldSave` / `flushOnServerStop`
+- [x] **删除 `SmartCraftOrderWorldData`**：130 行整个文件移除，旧 vanilla `WorldSavedData` 路径退役
+- [x] **`AE2IntelligentScheduling` 接线**：`serverStarted` 改用新 handler；新增 `serverStopping` 强制 flush
+- [x] **9 个集成测试（@TempDir 真实文件 IO）**：round-trip / 不存在 / 损坏 / legacy 兼容 / 覆写 / dirty flag / null event 安全
+- [x] **modVersion 0.1.9.2 → 0.1.9.3** + log.md changelog；114 个测试全过
+
+### 🚧 后续可优化
+
+- [ ] **`/save-all` 之间的节流**：当前每个 WorldEvent.Save 都重写整个 dat 文件。订单数量大时（理论上百个）每次写盘 1MB+ 不必要。可加 throttle：dirty 后等 N 秒批写，或 diff-based 增量持久化。
+- [ ] **多 dimension 支持**：现在写盘只锁 DIM 0 save。如果用户跑多人服务器只有 nether dimension 在 active save 周期内（罕见但可能），可能延后写盘。可改成"任意 dimension save 都 flush"。
+- [ ] **持久化损坏自动恢复**：目前损坏文件→警告留空。可加 auto-backup：写盘前先 cp 当前 dat 到 `.bak`，损坏时自动用 `.bak` 恢复。
+
+---
+
 ## 2026-04-30（v0.1.9.2 SmartCraft 全局 CPU 占用上限 G13）已完成
 
 > 用户反馈：「Programmable Hatches 的合成 CPU 配合智能合成时会无限创建 cluster 导致服务器卡顿。智能合成最多让合成CPU分配默认50个CPU，可配置。要分清玩家手动 craft，不能影响他们。」

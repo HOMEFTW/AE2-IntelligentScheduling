@@ -1,5 +1,100 @@
 # 开发日志
 
+## 2026-04-30（v0.1.9.2）：SmartCraft 全局 CPU 占用上限（G13）
+
+### 背景
+
+用户反馈：「Programmable Hatches 的合成 CPU（`TileCPU`，自动 CPU 多方块）配合智能合成时会无限创建 CraftingCPUCluster，导致服务器卡顿。要给智能合成设上限——默认最多 50 个，可配置。同时要分清玩家手动 craft 和智能合成，不能影响玩家自己提交的合成。」
+
+阅读 `D:\Code\GTNH LIB\Programmable-Hatches-Mod-290-daily-latest\src\main\java\reobf\proghatches\ae\cpu\TileCPU.java` 后定位根因：
+
+```java
+// onPostTick (line 615-671):
+k:{
+    boolean donotCreateNewCCC=false;
+    Iterator<...> it = clusterData.entrySet().iterator();
+    for(;it.hasNext();){
+        ...
+        if (set.getValue().state == 0) {
+            if (set.getKey().isBusy()) {
+                set.getValue().state = 1;
+            } else {
+                ...
+                donotCreateNewCCC = true;
+            }
+        }
+        ...
+    }
+    if(donotCreateNewCCC) break k;
+    // 创建新 CraftingCPUCluster
+    CraftingCPUCluster c = newCCC();
+    ...
+}
+```
+
+只要所有现存 cluster 都 busy（`isBusy()` true）且没有 idle 的，TileCPU 就在每 tick 创建一个新 cluster。SmartCraft 把一个大订单拆成 N 个 task 并发 submit，每个 task acquire 一个 cluster，TileCPU 就疯狂 mint 新 cluster——直到服务器 GC 死。
+
+### 设计
+
+在 SmartCraft 的 dispatch 路径加全局 budget gate，**只对 SmartCraft 提交的 task 生效**——玩家手动 craft 走 `ContainerCraftConfirm` → AE2 `submitJob`，根本不经过 `SmartCraftRuntimeCoordinator`，天然隔离。
+
+核心策略：
+
+1. `Config.MAX_CONCURRENT_SMART_CRAFT_SUBMISSIONS = 50`，0 = 禁用
+2. `SmartCraftRuntimeSession.countActiveSubmissions()` 数当前 session 内 `craftingLink != null` 的 task（即占着 AE2 cluster 的）
+3. `SmartCraftRuntimeCoordinator.globalActiveSubmissions()` 跨所有 sessions 汇总
+4. `dispatchReadyTasks` Phase 3 submit 循环之前算 budget = max - global active；超 budget 的 task 不调 `submitJob`，保留 cached plan，标 `WAITING_CPU` + throttle banner，下 tick 继续争 budget
+5. 成功拿到 link 时 `globalBudget--`，让同一 tick 内剩余 candidate 也尊重 cap
+6. 失败的 submit (link == null) **不**消耗 budget——它根本没占 cluster
+
+关键决策：
+
+- **Status = WAITING_CPU 而非 PENDING**：throttle 是临时性的（其他 task 完成就放出 budget），重用 WAITING_CPU 状态语义最贴切；玩家在 GUI 看到的 banner 直接说明原因
+- **不 detach plannedJob**：被 throttle 的 task 保留 cached plan，下 tick 一旦 budget 释放就直接 submit，零 plan-cost 开销
+- **每个 dispatchReadyTasks 调用计算一次 globalActiveSubmissions**：per-order tick 重新计算成本是 O(orders × tasks)，与 dispatch 自身复杂度同级，无新瓶颈
+- **stats 行加 capThrottled + activeSubmissions/cap**：让 admin 一眼看出 cap 是不是当前的瓶颈
+
+### 实现
+
+`config/Config.java`：
+- 加 `MAX_CONCURRENT_SMART_CRAFT_SUBMISSIONS = 50` 字段 + 文档（解释 TileCPU 语境 + 玩家隔离 + 0 禁用）
+- `synchronizeConfiguration` 加对应 forge config 注册（range 0-1024）
+
+`smartcraft/runtime/SmartCraftRuntimeSession.java`：
+- 加 `public int countActiveSubmissions()` 数 craftingLink != null 的 execution（注释说明轻微 over-count 是 intentional——保守倾向于 throttle 多）
+
+`smartcraft/runtime/SmartCraftRuntimeCoordinator.java`：
+- 加 `submissionsThrottledByCap` long 计数器
+- 加 `public int globalActiveSubmissions()` 跨 sessions sum
+- `dispatchReadyTasks` Phase 3 开头算 globalBudget；submit 循环加 cap-gate（throttle banner + markWaitingCpu + 计数 + skip submit）；成功 submit 后 `globalBudget--`
+- stats 日志行加 `submissionsThrottledByCap={} activeSubmissions={}/cap={}`
+
+### 测试（+2）
+
+`SmartCraftRuntimeCoordinatorTest`：
+- **`global_submission_cap_throttles_excess_tasks_v0192`**：4 独立 task + 4 idle CPU + cap=2 → tick 2 后恰 2 个 RUNNING，2 个 WAITING_CPU 带 throttle banner；`globalActiveSubmissions() == 2`
+- **`global_submission_cap_zero_disables_throttling_v0192`**：cap=0 → 3 个 task 全部 RUNNING（sentinel 语义验证）
+
+加了一个 `sessionWithCpus(ICraftingCPU...)` test helper 给多 CPU 场景。
+
+33 个测试全过。
+
+### 包
+
+modVersion `0.1.9.1` → `0.1.9.2`，assemble 出 3 jar：
+- `ae2intelligentscheduling-0.1.9.2.jar`（玩家 notch obf）
+- `ae2intelligentscheduling-0.1.9.2-dev.jar`（dev SRG）
+- `ae2intelligentscheduling-0.1.9.2-sources.jar`
+
+### 反思
+
+- **第三方 mod 副作用建模而非补丁**：本想直接给 TileCPU 加 mixin 限制 cluster 创建，但那会影响玩家手动 craft（玩家手动 submit 也会让 TileCPU 创建 cluster）。在 SmartCraft 自己的 dispatch 路径上 throttle 是更精确的"只针对 SmartCraft"的语义，且不依赖 Programmable Hatches 是否安装——其他类似行为的 CPU mod（未来如果出现）都自动受益。
+- **玩家手动 craft 完全不被影响**：SmartCraftRuntimeCoordinator 是 SmartCraft 的私有 API，玩家 ContainerCraftConfirm → AE2.submitJob 路径根本不导入这个类。隔离是结构性的，不是开关性的——不可能通过任何配置错误让 cap 误伤玩家手动 craft。这是设计上的强约束。
+- **错误路径不消耗 budget**：submit 返回 null（link == null）时不 `globalBudget--`，否则会让 SUBMIT_RETRY 循环一直被 cap "占用"虚拟 slot，整个 SmartCraft 卡死。budget 只在真正绑定 cluster（link != null）时消耗，与"占用 AE2 cluster 资源"严格对应。
+- **cap=0 sentinel 语义测试是必要的**：没这个测试，未来重构时很容易把 `cap <= 0 ? Integer.MAX_VALUE : ...` 改成 `Math.max(0, cap - active)` 一行看似简洁的代码，结果让 cap=0 把 SmartCraft 全锁死。专门一个测试盯住这个边界条件比依赖代码 review 更可靠。
+
+---
+
 ## 2026-04-29（v0.1.9.1）：标签页图标改为最终产物
 
 ### 背景

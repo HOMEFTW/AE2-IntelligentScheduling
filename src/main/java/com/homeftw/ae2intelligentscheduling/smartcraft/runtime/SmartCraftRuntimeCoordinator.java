@@ -463,6 +463,14 @@ public final class SmartCraftRuntimeCoordinator {
     private long linkCancelsFailedPermanently = 0L;
     private long ordersAutoRetried = 0L;
     private long ordersAutoRetryExhausted = 0L;
+    /**
+     * v0.1.9.2 (G13) Counts how many task-dispatch attempts were gated by the global submission
+     * cap ({@link Config#MAX_CONCURRENT_SMART_CRAFT_SUBMISSIONS}). A high value relative to
+     * {@link #plansSucceeded} means the cap is the dominant throttle and the player may want to
+     * raise it; a near-zero value means the cap is comfortably above natural concurrency.
+     * Surfaced in the periodic stats log line.
+     */
+    private long submissionsThrottledByCap = 0L;
 
     public SmartCraftRuntimeCoordinator(SmartCraftOrderManager orderManager, Ae2CpuSelector cpuSelector,
         JobPlanner jobPlanner, JobSubmitter jobSubmitter, OrderSync orderSync) {
@@ -499,6 +507,24 @@ public final class SmartCraftRuntimeCoordinator {
     public void register(UUID orderId, SmartCraftRuntimeSession session) {
         if (orderId == null || session == null) return;
         this.sessions.put(orderId, session);
+    }
+
+    /**
+     * v0.1.9.2 (G13) Sum of {@link SmartCraftRuntimeSession#countActiveSubmissions} across every
+     * registered session. Drives the global submission cap from
+     * {@link Config#MAX_CONCURRENT_SMART_CRAFT_SUBMISSIONS}: at any instant we never let the
+     * total number of SmartCraft tasks holding an AE2 crafting link exceed that value.
+     *
+     * <p>O(total tasks across sessions) per call. Called once at the start of each
+     * {@link #dispatchReadyTasks} (i.e. once per order per tick), so per-tick cost is O(orders \u00d7
+     * tasks) which is the same asymptotic class as the rest of the dispatch pass.
+     */
+    public int globalActiveSubmissions() {
+        int total = 0;
+        for (SmartCraftRuntimeSession s : this.sessions.values()) {
+            total += s.countActiveSubmissions();
+        }
+        return total;
     }
 
     /**
@@ -737,7 +763,7 @@ public final class SmartCraftRuntimeCoordinator {
         if (statsInterval > 0 && this.tickCounter - this.lastStatsLogTick >= (long) statsInterval) {
             this.lastStatsLogTick = this.tickCounter;
             LOGGER.info(
-                "SmartCraft stats: plansAttempted={} succeeded={} planRetried={} planPermFailed={} submitRetried={} submitPermFailed={} linkCancelRetried={} linkCancelPermFailed={} ordersAutoRetried={} ordersAutoRetryExhausted={} runsCancelled={} activeSessions={} pendingPlanRetries={} pendingSubmitRetries={} pendingLinkCancelRetries={} pendingOrderAutoRetries={}",
+                "SmartCraft stats: plansAttempted={} succeeded={} planRetried={} planPermFailed={} submitRetried={} submitPermFailed={} linkCancelRetried={} linkCancelPermFailed={} ordersAutoRetried={} ordersAutoRetryExhausted={} runsCancelled={} activeSessions={} pendingPlanRetries={} pendingSubmitRetries={} pendingLinkCancelRetries={} pendingOrderAutoRetries={} submissionsThrottledByCap={} activeSubmissions={}/cap={}",
                 Long.valueOf(this.plansAttempted),
                 Long.valueOf(this.plansSucceeded),
                 Long.valueOf(this.plansAutoRetried),
@@ -753,7 +779,10 @@ public final class SmartCraftRuntimeCoordinator {
                 Integer.valueOf(this.planRetries.size()),
                 Integer.valueOf(this.submitRetries.size()),
                 Integer.valueOf(this.linkCancelRetries.size()),
-                Integer.valueOf(this.orderAutoRetries.size()));
+                Integer.valueOf(this.orderAutoRetries.size()),
+                Long.valueOf(this.submissionsThrottledByCap),
+                Integer.valueOf(this.globalActiveSubmissions()),
+                Integer.valueOf(Config.MAX_CONCURRENT_SMART_CRAFT_SUBMISSIONS));
         }
     }
 
@@ -1238,10 +1267,35 @@ public final class SmartCraftRuntimeCoordinator {
         });
 
         // ===== Phase 3: apply decisions in priority order =====
+        // (v0.1.9.2 G13) Compute the global submission budget ONCE per dispatchReadyTasks call.
+        // Cap = Config.MAX_CONCURRENT_SMART_CRAFT_SUBMISSIONS (0 disables). Currently active
+        // submissions across all sessions count against the cap; we only get to submit
+        // (cap - active) more THIS call. Each successful link grant in the loop below decrements
+        // the local budget so we never bind more than the cap allows in a single tick. Failed
+        // submits (link == null) do NOT consume budget because they don't actually claim a
+        // CraftingCPU cluster.
+        int cap = Config.MAX_CONCURRENT_SMART_CRAFT_SUBMISSIONS;
+        int globalBudget = cap <= 0 ? Integer.MAX_VALUE : Math.max(0, cap - this.globalActiveSubmissions());
         Map<String, SmartCraftTask> taskUpdates = new HashMap<String, SmartCraftTask>();
         for (SmartCraftTask task : submitCandidates) {
             SmartCraftRuntimeSession.TaskExecution execution = session.executionFor(task);
             if (execution == null || execution.plannedJob() == null || execution.craftingLink() != null) continue;
+            // (G13) Cap gate: when the global budget is exhausted, keep the cached plan and the
+            // assigned CPU pin (if any) but do NOT call submitJob. The task lives on with a
+            // WAITING_CPU status and a throttle banner; next tick we recompute the budget and
+            // re-try as soon as some other task's link finishes. Player-initiated AE2 crafts
+            // never hit this code path \u2014 they go through ContainerCraftConfirm \u2192 submitJob
+            // directly \u2014 so the cap never blocks a manual craft.
+            if (globalBudget <= 0) {
+                String banner = "Throttled: SmartCraft global submission cap reached (" + cap + ")";
+                SmartCraftTask gated = task.withStatus(SmartCraftStatus.WAITING_CPU, banner);
+                session.markWaitingCpu(task, this.tickCounter);
+                this.submissionsThrottledByCap++;
+                if (gated != task) {
+                    taskUpdates.put(task.taskKey(), gated);
+                }
+                continue;
+            }
             SmartCraftTask nextTask = task;
             Optional<ICraftingCPU> selectedCpu = takeNextCpu(availableCpus);
             if (!selectedCpu.isPresent()) {
@@ -1259,6 +1313,9 @@ public final class SmartCraftRuntimeCoordinator {
                     // brings us back through submit gets a fresh 5-attempt allowance.
                     this.submitRetries.remove(task.taskKey());
                     nextTask = task.withStatus(SmartCraftStatus.RUNNING, null);
+                    // (G13) Successful link claims one slot of the global budget. Decrement so
+                    // subsequent candidates in this same loop respect the cap.
+                    globalBudget--;
                 } else {
                     String diagnosticReason = diagnoseSubmitFailure(
                         task,

@@ -207,6 +207,14 @@ public final class SmartCraftOrderManager {
         }
 
         SmartCraftOrder current = existing.get();
+        // v0.1.9.5 (G15) Restart-interrupted orders are historical: their AE2 craftingLinks are
+        // gone and re-planning would silently submit fresh AE2 jobs whose intermediate refunds
+        // cannot be reconciled with whatever the cluster's cancel-on-stop already did. Force the
+        // player to submit a new order instead. The GUI greys out the retry button on these
+        // orders, this is the server-side guard that backs that.
+        if (current.interruptedByRestart()) {
+            return Optional.empty();
+        }
         if (!hasRetriableTasks(current)) {
             return Optional.empty();
         }
@@ -339,46 +347,61 @@ public final class SmartCraftOrderManager {
     }
 
     /**
-     * v0.1.9 (G12) Apply the post-restart task-status fold-back. AE2 internal state (planning
-     * futures, planned jobs, crafting links) cannot be persisted, so any task that was actively
-     * using those references gets reset to PENDING with a recovery banner. Terminal task states
-     * (DONE / FAILED / CANCELLED) are preserved — they don't depend on AE2 runtime objects.
+     * v0.1.9.5 (G15) Apply the post-restart task-status fold-back. <b>Aligned with AE2 vanilla:</b>
+     * AE2 doesn't persist crafting jobs across restarts — cluster state resets, the player can
+     * see leftover intermediates inside each cluster's storage and manually cancel from
+     * GuiCraftingCPU to refund them. Smart-craft orders mirror that semantic: orders persist for
+     * <b>history visibility only</b>, every in-flight task is folded to {@code CANCELLED} (with a
+     * recovery banner), and the order itself is marked {@code CANCELLED} + {@code interruptedByRestart=true}.
      *
-     * <p>The order-level status is also re-synthesized: if any task is now non-terminal the order
-     * becomes QUEUED so the runtime picks it up; if every task is terminal we keep whatever
-     * existed (typically COMPLETED / PAUSED / CANCELLED).
+     * <p><b>Why no auto-resume:</b> the v0.1.9 G12 design that re-queued in-flight tasks led to
+     * runtime races (sessions empty, retry book-keeping lost, AE2 link references dead) and
+     * couldn't safely re-acquire the same CPU clusters. Forcing the player to submit a fresh
+     * order is simpler and matches what AE2 already does for them.
+     *
+     * <p>{@code interruptedByRestart} drives downstream UX: retry button greyed out
+     * ({@link #retryFailedTasks} returns empty), cancel button re-purposed to "remove from
+     * list" (handled in {@code RequestSmartCraftActionPacket}). Terminal task states
+     * (DONE / FAILED / CANCELLED / COMPLETED) are preserved unchanged — those orders were already
+     * historical when the server stopped.
      */
     public static SmartCraftOrder resetForRestart(SmartCraftOrder order) {
         if (order == null) return null;
-        boolean anyResumable = false;
+        boolean anyInterrupted = false;
         List<SmartCraftLayer> nextLayers = new ArrayList<SmartCraftLayer>(order.layers().size());
         for (SmartCraftLayer layer : order.layers()) {
             List<SmartCraftTask> nextTasks = new ArrayList<SmartCraftTask>(layer.tasks().size());
             for (SmartCraftTask task : layer.tasks()) {
                 SmartCraftStatus s = task.status();
                 if (s == null) {
-                    nextTasks.add(task.withStatus(SmartCraftStatus.PENDING, null));
-                    anyResumable = true;
+                    // Defensive: corrupt status value in NBT. Treat as interrupted-from-anything.
+                    nextTasks.add(
+                        task.withStatus(SmartCraftStatus.CANCELLED, "Interrupted by server restart"));
+                    anyInterrupted = true;
                 } else if (s.isTerminalTaskState()) {
-                    // DONE / FAILED / CANCELLED / COMPLETED — no AE2 runtime state needed.
+                    // DONE / FAILED / CANCELLED / COMPLETED — already terminal pre-restart, preserve.
                     nextTasks.add(task);
                 } else {
                     // PENDING / QUEUED / WAITING_CPU / SUBMITTING / RUNNING / VERIFYING_OUTPUT /
-                    // PAUSED / ANALYZING all fold to PENDING; their previous blockingReason
-                    // (e.g. retry banner) is wiped because the retry counters live in the
-                    // RuntimeCoordinator and don't survive restart either.
-                    nextTasks.add(task.withStatus(SmartCraftStatus.PENDING, "Resumed after server restart"));
-                    anyResumable = true;
+                    // PAUSED / ANALYZING all fold to CANCELLED with the same recovery banner so
+                    // the GUI's status line clearly distinguishes "interrupted" from a normal
+                    // user-initiated cancel.
+                    nextTasks.add(
+                        task.withStatus(SmartCraftStatus.CANCELLED, "Interrupted by server restart"));
+                    anyInterrupted = true;
                 }
             }
             nextLayers.add(layer.withTasks(nextTasks));
         }
         SmartCraftOrder reset = order.withLayers(nextLayers);
-        if (anyResumable && reset.status() != SmartCraftStatus.CANCELLED) {
-            reset = reset.withStatus(SmartCraftStatus.QUEUED);
+        if (anyInterrupted) {
+            // Force the order itself into CANCELLED so isFinished() returns true and the runtime
+            // tick (which only iterates active sessions) treats this as historical. Mark the
+            // restart-interrupted flag so retry/cancel UX paths re-target downstream.
+            reset = reset.withStatus(SmartCraftStatus.CANCELLED).withInterruptedByRestart(true);
         }
         // Reset currentLayerIndex to the first non-complete layer so applyLayerStatus has a sane
-        // starting point on the first post-restart tick.
+        // starting point if anything (e.g. a retry on a non-interrupted order) ever revives it.
         int firstIncomplete = nextLayers.size();
         for (int i = 0; i < nextLayers.size(); i++) {
             if (!nextLayers.get(i).isComplete()) {

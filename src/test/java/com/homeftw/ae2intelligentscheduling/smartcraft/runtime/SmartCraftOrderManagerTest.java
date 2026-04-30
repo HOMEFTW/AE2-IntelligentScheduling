@@ -168,13 +168,13 @@ class SmartCraftOrderManagerTest {
     }
 
     /**
-     * v0.1.9 (G12) resetForRestart must fold non-terminal tasks (RUNNING / SUBMITTING / etc.)
-     * back to PENDING because their AE2 link / planning future references didn't survive the
-     * server restart. Terminal tasks (DONE / FAILED / CANCELLED) keep their original status \u2014
-     * they don't need AE2 runtime state.
+     * v0.1.9.5 (G15) resetForRestart now folds in-flight tasks to CANCELLED and marks the order
+     * {@code interruptedByRestart=true}. Aligned with AE2 vanilla which doesn't persist crafting
+     * jobs across restarts. Terminal tasks (DONE / FAILED / CANCELLED) keep their original
+     * status because they were already settled when the server stopped.
      */
     @Test
-    void resetForRestart_folds_in_flight_tasks_to_pending_v019() {
+    void resetForRestart_folds_in_flight_tasks_to_cancelled_v0195() {
         FakeRequestKey key = new FakeRequestKey("item");
         SmartCraftTask running = new SmartCraftTask(
             "task-running",
@@ -215,21 +215,116 @@ class SmartCraftOrderManagerTest {
 
         SmartCraftOrder reset = SmartCraftOrderManager.resetForRestart(order);
 
-        assertEquals(SmartCraftStatus.QUEUED, reset.status(), "any-resumable order must reset to QUEUED");
+        assertEquals(
+            SmartCraftStatus.CANCELLED,
+            reset.status(),
+            "v0.1.9.5: any-interrupted order must reset to CANCELLED (history-only)");
+        org.junit.jupiter.api.Assertions
+            .assertTrue(reset.interruptedByRestart(), "interruptedByRestart flag must be true");
         java.util.List<SmartCraftTask> tasks = reset.layers()
             .get(0)
             .tasks();
-        assertEquals(SmartCraftStatus.PENDING, tasks.get(0)
-            .status(), "RUNNING task must fold to PENDING");
+        assertEquals(SmartCraftStatus.CANCELLED, tasks.get(0)
+            .status(), "RUNNING task must fold to CANCELLED");
         assertEquals(SmartCraftStatus.DONE, tasks.get(1)
             .status(), "DONE task must keep its terminal status");
         assertEquals(SmartCraftStatus.FAILED, tasks.get(2)
             .status(), "FAILED task must keep its terminal status");
         org.junit.jupiter.api.Assertions.assertEquals(
-            "Resumed after server restart",
+            "Interrupted by server restart",
             tasks.get(0)
                 .blockingReason(),
-            "PENDING tasks get a recovery banner so the player knows it was a server-restart fold");
+            "interrupted tasks get a recovery banner the player can read in the GUI");
+    }
+
+    /**
+     * v0.1.9.5 (G15) An order whose every task was already terminal pre-restart (e.g. fully
+     * COMPLETED + PAUSED orders) doesn't get the interruptedByRestart marker -- nothing was
+     * actually interrupted, the order just sat in its final state across the restart. This
+     * matters because such orders should remain Retry-eligible if any task is FAILED.
+     */
+    @Test
+    void resetForRestart_does_not_mark_interrupted_when_no_task_was_in_flight() {
+        FakeRequestKey key = new FakeRequestKey("item");
+        SmartCraftTask done = new SmartCraftTask(
+            "task-done",
+            key,
+            1L,
+            0,
+            0,
+            1,
+            SmartCraftStatus.DONE,
+            null);
+        SmartCraftTask failed = new SmartCraftTask(
+            "task-failed",
+            key,
+            1L,
+            0,
+            0,
+            1,
+            SmartCraftStatus.FAILED,
+            "previously failed");
+        List<SmartCraftLayer> layers = Collections
+            .singletonList(new SmartCraftLayer(0, Arrays.asList(done, failed)));
+        SmartCraftOrder order = new SmartCraftOrder(
+            key,
+            2L,
+            SmartCraftOrderScale.SMALL,
+            SmartCraftStatus.PAUSED,
+            layers,
+            0);
+
+        SmartCraftOrder reset = SmartCraftOrderManager.resetForRestart(order);
+
+        org.junit.jupiter.api.Assertions
+            .assertFalse(reset.interruptedByRestart(), "no in-flight tasks -> not interrupted");
+        // Status untouched: PAUSED was already a valid terminal-with-retry state.
+        assertEquals(SmartCraftStatus.PAUSED, reset.status());
+    }
+
+    /**
+     * v0.1.9.5 (G15) retryFailedTasks is a no-op on interrupted-by-restart orders. The player
+     * has to submit a fresh order to trigger new AE2 work; reviving the historical entry would
+     * silently submit fresh AE2 jobs whose intermediate refunds can't be reconciled with what
+     * the AE2 cluster already cancelled at restart time.
+     */
+    @Test
+    void retryFailedTasks_rejects_interrupted_orders() {
+        FakeRequestKey key = new FakeRequestKey("item");
+        SmartCraftTask cancelled = new SmartCraftTask(
+            "task-cancelled",
+            key,
+            1L,
+            0,
+            0,
+            1,
+            SmartCraftStatus.CANCELLED,
+            "Interrupted by server restart");
+        SmartCraftOrder interrupted = new SmartCraftOrder(
+            key,
+            1L,
+            SmartCraftOrderScale.SMALL,
+            SmartCraftStatus.CANCELLED,
+            Collections.singletonList(new SmartCraftLayer(0, Collections.singletonList(cancelled))),
+            0,
+            "tester",
+            true /* interruptedByRestart */);
+        SmartCraftOrderManager mgr = new SmartCraftOrderManager();
+        java.util.UUID id = java.util.UUID.randomUUID();
+        mgr.trackWithId(id, interrupted);
+
+        java.util.Optional<SmartCraftOrder> retried = mgr.retryFailedTasks(id);
+
+        org.junit.jupiter.api.Assertions
+            .assertFalse(retried.isPresent(), "interrupted orders must not be retriable");
+        // The order still in the manager unchanged -- retry must not silently mutate it.
+        assertEquals(
+            SmartCraftStatus.CANCELLED,
+            mgr.get(id)
+                .get()
+                .status());
+        org.junit.jupiter.api.Assertions
+            .assertTrue(mgr.get(id).get().interruptedByRestart(), "interruptedByRestart flag still set");
     }
 
     private static final class FakeRequestKey implements SmartCraftRequestKey {

@@ -254,6 +254,47 @@ class SmartCraftPersistenceTest {
             "null event must not produce an on-disk file");
     }
 
+    /**
+     * v0.1.9.5 (G15) The {@code interruptedByRestart} flag must round-trip through SmartCraftOrder's
+     * NBT layer. Tested directly on the order (not via the manager) because the manager's
+     * loadFromNBT path runs through {@code resetForRestart} which would itself flip
+     * non-terminal tasks to interrupted, interfering with the assertion. The persistence-level
+     * test (round-trip-orders above) covers the file IO path; this one covers just the
+     * order-level field.
+     */
+    @org.junit.jupiter.api.Test
+    void interruptedByRestart_field_round_trips_through_nbt() {
+        SmartCraftOrder original = makeOrder("interrupted-once").withInterruptedByRestart(true);
+        NBTTagCompound tag = new NBTTagCompound();
+        original.writeToNBT(tag);
+        SmartCraftOrder reloaded = SmartCraftOrder.readFromNBT(tag);
+        assertNotNull(reloaded, "order must round-trip");
+        assertTrue(
+            reloaded.interruptedByRestart(),
+            "interruptedByRestart=true must persist across writeToNBT / readFromNBT");
+    }
+
+    @org.junit.jupiter.api.Test
+    void interruptedByRestart_defaults_to_false_when_not_persisted() {
+        // Defensive: writeToNBT must NOT emit the tag when the flag is false (saves bytes), AND
+        // readFromNBT must default a missing tag to false. A missing-tag-defaults-to-true would
+        // flip every legacy v0.1.9.4 save to historical on first load with v0.1.9.5.
+        SmartCraftOrder original = makeOrder("normal"); // default: interruptedByRestart=false
+        assertFalse(
+            original.interruptedByRestart(),
+            "makeOrder helper must produce non-interrupted orders by default");
+        NBTTagCompound tag = new NBTTagCompound();
+        original.writeToNBT(tag);
+        assertFalse(
+            tag.hasKey("interruptedByRestart"),
+            "false flag must not be persisted (NBT bloat avoidance)");
+        SmartCraftOrder reloaded = SmartCraftOrder.readFromNBT(tag);
+        assertNotNull(reloaded);
+        assertFalse(
+            reloaded.interruptedByRestart(),
+            "missing tag must read back as false (no legacy save misclassified as historical)");
+    }
+
     private static SmartCraftOrder makeOrder(String requestKeyId) {
         SmartCraftRequestKey key = new FakePersistKey(requestKeyId);
         SmartCraftTask task = new SmartCraftTask(

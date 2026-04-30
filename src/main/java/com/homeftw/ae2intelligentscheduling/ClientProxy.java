@@ -53,6 +53,29 @@ public class ClientProxy extends CommonProxy {
     @Override
     public void applySmartCraftOrderList(SyncSmartCraftOrderListPacket packet) {
         SmartCraftConfirmGuiEventHandler.OVERLAY.applyOrderList(packet);
+        // v0.1.9.5 (G15) Mirror the GUI-open logic from {@link #openSmartCraftStatus} so that
+        // View-Status button clicks resolved through the LIST sync path (server replies with
+        // SyncSmartCraftOrderListPacket to RequestOrderStatusPacket) actually open the dedicated
+        // status GUI. Pre-v0.1.9.5 only the single-order sync path consumed the flag, leaving the
+        // post-restart "click View Status -> nothing happens" deadlock: the player has orders but
+        // no in-flight order-submission to trigger a single-order sync, so the LIST packet was
+        // the only sync that arrived, and it didn't honor the flag.
+        Minecraft minecraft = Minecraft.getMinecraft();
+        if (minecraft == null) return;
+        net.minecraft.client.gui.GuiScreen current = minecraft.currentScreen;
+        if (SmartCraftScreenFlow.shouldOpenDedicatedStatusScreen(
+            SmartCraftScreenFlow.kindOf(current),
+            consumeOpenSmartCraftStatusOnNextSync())) {
+            // Use the overlay's currently-focused order as the initial packet for the new GUI.
+            // applyOrderList above has already populated/refreshed the overlay, so this is the
+            // freshest available view of the order the player wants to inspect. Suppress the open
+            // when the overlay is empty (manager genuinely has no orders) -- opening an empty
+            // status GUI is worse UX than no-op.
+            SyncSmartCraftOrderPacket initial = SmartCraftConfirmGuiEventHandler.OVERLAY.currentOrderPacket();
+            if (initial != null) {
+                minecraft.displayGuiScreen(new GuiSmartCraftStatus(initial));
+            }
+        }
     }
 
     @Override

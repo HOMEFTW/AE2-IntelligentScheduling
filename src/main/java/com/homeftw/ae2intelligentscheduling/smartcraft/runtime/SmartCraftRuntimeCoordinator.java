@@ -800,7 +800,7 @@ public final class SmartCraftRuntimeCoordinator {
         if (cancelled.isPresent()) {
             // (G4) Count this run, regardless of how many of its tasks had reached CPUs.
             this.runsCancelled++;
-            // (G1) Sweep any pending retry state \u2014 the order's gone, no point holding the entries.
+            // (G1) Sweep any pending retry state — the order's gone, no point holding the entries.
             for (SmartCraftLayer layer : cancelled.get()
                 .layers()) {
                 for (SmartCraftTask t : layer.tasks()) {
@@ -818,9 +818,48 @@ public final class SmartCraftRuntimeCoordinator {
     }
 
     /**
+     * v0.1.9.5 (G15) Remove an order from the manager outright. Used by the {@code CANCEL_ORDER}
+     * packet handler when the target order is {@code interruptedByRestart} (the player's intent
+     * is to drop the historical entry, not to cancel any active work which by definition no
+     * longer exists). Distinct from {@link #cancel(UUID)} which only marks status {@code CANCELLED}
+     * and relies on the next tick's auto-vanish to remove a non-retry-eligible terminal order
+     * (which doesn't trigger for orders without a session, i.e. exactly the post-restart case).
+     *
+     * <p>Cleans up session bookkeeping and retry maps the same way {@code cancel} does so the
+     * coordinator state is fully drained for the gone order. Returns the removed order or
+     * {@link Optional#empty()} if the order id was unknown.
+     */
+    public Optional<SmartCraftOrder> removeOrder(UUID orderId) {
+        Optional<SmartCraftOrder> existing = this.orderManager.get(orderId);
+        if (!existing.isPresent()) {
+            return Optional.empty();
+        }
+        SmartCraftRuntimeSession session = this.sessions.remove(orderId);
+        if (session != null) {
+            // Defensive: an interrupted-by-restart order should not have a session, but if some
+            // future code path register()s one anyway, draining its links matches what cancel
+            // would have done.
+            session.cancelAll();
+        }
+        for (SmartCraftLayer layer : existing.get().layers()) {
+            for (SmartCraftTask t : layer.tasks()) {
+                this.planRetries.remove(t.taskKey());
+                this.submitRetries.remove(t.taskKey());
+                this.linkCancelRetries.remove(t.taskKey());
+            }
+        }
+        this.orderAutoRetries.remove(orderId);
+        this.markedTerminalLastTick.remove(orderId);
+        this.orderManager.remove(orderId);
+        // The packet handler is responsible for the player-facing sync (it has the player handle
+        // we don't). Returning Optional.of(existing) is the signal that the action was applied.
+        return existing;
+    }
+
+    /**
      * Soft-cancel an order: spare tasks already RUNNING (let AE2 finish them) but cancel everything
      * not-yet-started so no new crafts begin. Compared to {@link #cancel(UUID)} this preserves the
-     * intermediate materials a half-done craft has already routed into AE2 storage clusters \u2014
+     * intermediate materials a half-done craft has already routed into AE2 storage clusters —
      * pulling the rug on a RUNNING task would orphan those items in the CPU's internal state.
      *
      * <p>
